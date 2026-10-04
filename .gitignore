@@ -1,0 +1,64 @@
+# Node / npm
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+package-lock.json.bak
+
+# Electron / electron-builder build output
+dist/
+out/
+build/
+release/
+*.exe
+*.dmg
+*.deb
+*.AppImage
+*.snap
+*.blockmap
+builder-effective-config.yaml
+builder-debug.yml
+
+# Local user data (the SQLite DB lives here on the user's machine, NOT in repo)
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# Env files (NEVER commit secrets)
+.env
+.env.local
+.env.*.local
+
+# Logs and runtime artifacts
+*.log
+logs/
+.cache/
+.tmp/
+temp/
+
+# Coverage / test artifacts
+coverage/
+.nyc_output/
+*.lcov
+
+# Misc
+*.tgz
+.eslintcache
+.prettiercache

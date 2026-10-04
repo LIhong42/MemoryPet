@@ -1,0 +1,59 @@
+{
+  "name": "memory-pet",
+  "version": "0.1.0",
+  "description": "MemoryPet — local-first relationship & reminders with a desktop pet",
+  "main": "main/main.js",
+  "author": "MemoryPet",
+  "license": "MIT",
+  "scripts": {
+    "start": "node scripts/run-electron.js .",
+    "dev": "node scripts/run-electron.js . --dev",
+    "prebuild": "node scripts/prebuild-extract-winCodeSign.js",
+    "build": "npm run prebuild && electron-builder",
+    "build:dir": "npm run prebuild && electron-builder --dir"
+  },
+  "dependencies": {
+    "sql.js": "^1.10.3"
+  },
+  "devDependencies": {
+    "electron": "^32.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.memorypet.app",
+    "productName": "MemoryPet",
+    "files": [
+      "main/**/*",
+      "pet/**/*",
+      "src/**/*",
+      "resources/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources",
+        "to": "resources"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "icons/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "MemoryPet"
+    },
+    "directories": {
+      "output": "dist"
+    }
+  }
+}

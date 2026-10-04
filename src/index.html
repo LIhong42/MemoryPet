@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <title>MemoryPet</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">🐾 MemoryPet</div>
+    <nav class="nav">
+      <a href="#/" data-route="/">首页</a>
+      <a href="#/today" data-route="/today">今日</a>
+      <a href="#/contacts" data-route="/contacts">联系人</a>
+      <a href="#/events" data-route="/events">事件</a>
+      <a href="#/search" data-route="/search">搜索</a>
+      <a href="#/settings" data-route="/settings">设置</a>
+    </nav>
+    <div class="pet-pill" id="pet-pill">
+      <span class="pet-dot" id="pet-dot"></span>
+      <span id="pet-pill-text">宠物正常</span>
+    </div>
+  </header>
+  <main id="app" class="content"></main>
+
+  <!-- Reminder modal -->
+  <div class="modal-backdrop hidden" id="reminder-modal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="reminder-title">提醒</h3>
+        <button class="icon-btn" id="reminder-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="reminder-meta" class="reminder-meta"></div>
+        <p id="reminder-description"></p>
+        <div id="reminder-actions" class="modal-actions"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast-container"></div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

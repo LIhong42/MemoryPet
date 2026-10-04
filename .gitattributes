@@ -1,0 +1,19 @@
+# .gitattributes — enforce consistent line endings across OSes
+# (MemoryPet is Windows-first; CRLF is the platform default, but web/renderer
+# tooling often assumes LF. Be explicit so collaborators don't get noisy diffs.)
+
+* text=auto eol=lf
+
+# Batch / shell scripts must keep CRLF on Windows for cmd.exe compatibility.
+*.bat         text eol=crlf
+*.cmd         text eol=crlf
+*.ps1         text eol=crlf
+
+# Images / binaries — leave alone, no conversion.
+*.png  binary
+*.ico  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.wasm binary

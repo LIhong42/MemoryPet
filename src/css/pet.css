@@ -1,0 +1,93 @@
+/* src/css/pet.css */
+:root { --size: 180px; }
+html, body {
+  margin: 0; padding: 0;
+  width: var(--size); height: var(--size);
+  background: transparent;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.pet-root {
+  position: relative;
+  width: var(--size); height: var(--size);
+  pointer-events: none; /* pass-through by default */
+}
+
+.pet-sprite {
+  width: var(--size); height: var(--size);
+  pointer-events: auto; /* sprite captures clicks */
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  animation: bob 3.2s ease-in-out infinite;
+  transform-origin: center bottom;
+}
+/* While dragging, freeze the bob/shake animation so the sprite tracks the
+   cursor 1:1 without the lag of a moving target. */
+.pet-sprite.dragging {
+  animation: none !important;
+  cursor: grabbing;
+}
+.pet-sprite svg { filter: drop-shadow(0 4px 8px rgba(0,0,0,0.18)); }
+
+.pet-sprite[data-state="REMINDER"] {
+  animation: shake 0.4s linear infinite;
+}
+.pet-sprite[data-state="REMINDER"] svg { filter: drop-shadow(0 0 12px #ff5252) drop-shadow(0 4px 8px rgba(0,0,0,0.2)); }
+
+@keyframes bob {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-6px); }
+}
+@keyframes shake {
+  0%, 100% { transform: translateX(0) translateY(0); }
+  20% { transform: translateX(-3px) translateY(-2px); }
+  40% { transform: translateX(3px) translateY(-3px); }
+  60% { transform: translateX(-2px) translateY(-1px); }
+  80% { transform: translateX(2px) translateY(-2px); }
+}
+
+.badge {
+  position: absolute;
+  top: 8px; right: 8px;
+  background: #ff5252;
+  color: white;
+  border-radius: 50%;
+  width: 24px; height: 24px;
+  display: grid; place-items: center;
+  font: 600 12px sans-serif;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+  pointer-events: none;
+  animation: pop 240ms ease-out;
+}
+@keyframes pop {
+  0%   { transform: scale(0); }
+  60%  { transform: scale(1.2); }
+  100% { transform: scale(1); }
+}
+
+.reminder-bubble {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: white;
+  color: var(--text, #2a2a2a);
+  font: 12px sans-serif;
+  padding: 6px 10px;
+  border-radius: 8px;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  margin-bottom: 8px;
+  pointer-events: none;
+}
+.reminder-bubble::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: white;
+}
