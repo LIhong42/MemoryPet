@@ -1,11 +1,12 @@
 // src/js/main.js — entry point, wires router, navigation active link, reminder modal, pet state pill
 import { api, escapeHtml, fmtDateTime, toast } from './api.js';
 import { register, onChange, start } from './router.js';
-import './pages/home.js';
 import './pages/today.js';
 import './pages/contacts_list.js';
 import './pages/contact_detail.js';
 import './pages/contact_edit.js';
+import './pages/contact_list_edit.js';
+import './pages/attributes.js';
 import './pages/events.js';
 import './pages/event_edit.js';
 import './pages/search.js';

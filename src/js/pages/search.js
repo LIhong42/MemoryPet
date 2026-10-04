@@ -1,5 +1,5 @@
 // src/js/pages/search.js
-import { api, escapeHtml, firstChar, fmtDateTime } from '../api.js';
+import { api, escapeHtml, firstChar, displayName, fmtDateTime } from '../api.js';
 import { register, navigate } from '../router.js';
 
 async function render(_args, params) {
@@ -37,10 +37,10 @@ async function runSearch(q) {
       ${r.contacts.map((c) => `
         <div class="list-item" data-id="${escapeHtml(c.id)}" data-action="contact">
           <div class="row">
-            <div class="avatar">${escapeHtml(firstChar(c.first_name))}</div>
+            <div class="avatar">${escapeHtml(firstChar(c.name))}</div>
             <div>
               <div><strong>${escapeHtml(displayName(c))}</strong></div>
-              <div class="meta">${escapeHtml(c.company || c.job_position || '')}</div>
+              <div class="meta">${escapeHtml(c.relationship || '')}</div>
             </div>
           </div>
         </div>
@@ -68,10 +68,6 @@ async function runSearch(q) {
   out.querySelectorAll('[data-action="event"]').forEach((el) => {
     el.onclick = () => navigate('/events/' + el.dataset.id);
   });
-}
-
-function displayName(c) {
-  return [c.first_name, c.last_name].filter(Boolean).join(' ') || c.nickname || '(无名)';
 }
 
 function kindLabel(k) {

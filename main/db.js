@@ -8,11 +8,11 @@ PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS contacts (
   id           TEXT PRIMARY KEY,
-  first_name   TEXT NOT NULL DEFAULT '',
-  last_name    TEXT NOT NULL DEFAULT '',
-  nickname     TEXT,
-  company      TEXT,
-  job_position TEXT,
+  name         TEXT NOT NULL DEFAULT '',
+  relationship TEXT,
+  likes_json   TEXT NOT NULL DEFAULT '[]',
+  taboos_json  TEXT NOT NULL DEFAULT '[]',
+  gifts_json   TEXT NOT NULL DEFAULT '[]',
   listed       INTEGER NOT NULL DEFAULT 1,
   created_at   TEXT NOT NULL,
   updated_at   TEXT NOT NULL
@@ -49,6 +49,18 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS idx_events_next_fire ON events(next_fire_at);
 CREATE INDEX IF NOT EXISTS idx_events_contact    ON events(contact_id);
+
+CREATE TABLE IF NOT EXISTS contact_attributes (
+  id          TEXT PRIMARY KEY,
+  contact_id  TEXT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL CHECK (kind IN ('like','taboo','gift')),
+  description TEXT NOT NULL DEFAULT '',
+  event       TEXT,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_attrs_contact ON contact_attributes(contact_id);
+CREATE INDEX IF NOT EXISTS idx_attrs_kind    ON contact_attributes(kind);
 
 CREATE TABLE IF NOT EXISTS reminder_acks (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -112,6 +124,8 @@ async function open(dbPathArg) {
   }
   db = bytes ? new SQL.Database(bytes) : new SQL.Database();
   db.run(SCHEMA);
+  migrateContactsV2();
+  migrateAttributesV1();
 
   // Settings defaults
   const s = db.prepare('SELECT value FROM settings WHERE key = ?');
@@ -212,8 +226,181 @@ function setSetting(key, value) {
   markDirty();
 }
 
+// ---- Contacts v2 migration ----
+// Adds name/relationship/likes_json/taboos_json/gifts_json columns to existing
+// contacts tables, backfills `name` from the legacy first_name/last_name/nickname
+// columns, then reindexes the search_index once (guarded by a settings key so
+// it does not re-run on every boot).
+function migrateContactsV2() {
+  if (!db) return;
+  const cols = db.prepare("PRAGMA table_info(contacts)");
+  const names = new Set();
+  while (cols.step()) names.add(cols.get()[1]);
+  cols.free();
+
+  if (!names.has('name')) {
+    db.run("ALTER TABLE contacts ADD COLUMN name         TEXT NOT NULL DEFAULT ''");
+    db.run("ALTER TABLE contacts ADD COLUMN relationship TEXT");
+    db.run("ALTER TABLE contacts ADD COLUMN likes_json   TEXT NOT NULL DEFAULT '[]'");
+    db.run("ALTER TABLE contacts ADD COLUMN taboos_json  TEXT NOT NULL DEFAULT '[]'");
+    db.run("ALTER TABLE contacts ADD COLUMN gifts_json   TEXT NOT NULL DEFAULT '[]'");
+    // Backfill `name` from legacy columns. CONCAT preserves NULLs so we trim
+    // before NULLIF — old rows where both first and last are empty fall back to
+    // nickname; rows where everything is empty stay '' (displayName will render
+    // "(无名)").
+    db.run(
+      `UPDATE contacts
+         SET name = NULLIF(TRIM(COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')), '')
+       WHERE (COALESCE(first_name,'') <> '' OR COALESCE(last_name,'') <> '')
+         AND (name IS NULL OR name = '')`
+    );
+    db.run(
+      `UPDATE contacts SET name = COALESCE(nickname, '')
+       WHERE (name IS NULL OR name = '') AND COALESCE(nickname,'') <> ''`
+    );
+    markDirty();
+  }
+
+  // Rebuild search_index for all listed contacts once after the upgrade so the
+  // search body matches the new schema. Guarded so it does not run on every
+  // boot.
+  if (getSetting('schema_v2_applied') !== '1') {
+    try {
+      const rows = all('SELECT * FROM contacts WHERE listed = 1');
+      for (const r of rows) {
+        const c = parseContactRow(r);
+        const body = buildContactBody(c);
+        upsertSearch('contact', c.id, body);
+      }
+      setSetting('schema_v2_applied', '1');
+    } catch (e) {
+      console.error('contacts v2 search reindex failed:', e);
+    }
+  }
+}
+
+function safeParseArray(s) {
+  try {
+    const v = JSON.parse(s || '[]');
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+
+// Drop the `_json` columns from a contact row before exposing it to the
+// renderer. The renderer never sees raw JSON strings or the parsed arrays —
+// likes / taboos / gifts now live in the `contact_attributes` table and are
+// fetched via the attributes:* IPC handlers. The JSON columns are still kept
+// on disk for search backwards-compat (see buildContactBody + migrateAttributesV1).
+function parseContactRow(row) {
+  if (!row) return row;
+  const out = { ...row };
+  delete out.likes_json;
+  delete out.taboos_json;
+  delete out.gifts_json;
+  return out;
+}
+
+// Flatten contact fields into a single string for the legacy search_index
+// cache. Used by migrateContactsV2, migrateAttributesV1, and by the
+// contacts:create / contacts:update IPC handlers — see main/ipc.js.
+//
+// Reads from contact_attributes (the new global table) rather than the
+// embedded JSON columns so newly-added likes/taboos/gifts are searchable
+// right after the migration runs.
+function buildContactBody(c) {
+  const parts = [c && c.name, c && c.relationship];
+  if (c && c.id) {
+    const rows = all(
+      `SELECT description FROM contact_attributes
+       WHERE contact_id = ? AND description <> ''`,
+      [c.id]
+    );
+    for (const r of rows) parts.push(r.description);
+  }
+  return parts.filter(Boolean).join(' ');
+}
+
+// ---- contact_attributes v1 migration ----
+// One-shot import from the legacy contacts.likes_json / taboos_json /
+// gifts_json columns into the new contact_attributes table. Guarded by a
+// settings key so it never re-runs. After this runs the JSON columns still
+// exist on disk (for compatibility / future cleanup) but are no longer the
+// source of truth for the UI.
+function migrateAttributesV1() {
+  if (!db) return;
+  if (getSetting('attributes_v1_applied') === '1') return;
+
+  // Defensive: if SCHEMA somehow didn't create the table yet, create it now.
+  db.run(`CREATE TABLE IF NOT EXISTS contact_attributes (
+    id TEXT PRIMARY KEY,
+    contact_id TEXT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('like','taboo','gift')),
+    description TEXT NOT NULL DEFAULT '',
+    event TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`);
+
+  const KIND_TO_COL = { like: 'likes_json', taboo: 'taboos_json', gift: 'gifts_json' };
+  const contacts = all('SELECT id, likes_json, taboos_json, gifts_json FROM contacts');
+  const now = nowStr();
+  for (const c of contacts) {
+    for (const kind of ['like', 'taboo', 'gift']) {
+      const arr = safeParseArray(c[KIND_TO_COL[kind]]);
+      for (const it of arr) {
+        if (!it || typeof it !== 'object') continue;
+        const desc = typeof it.description === 'string' ? it.description.trim() : '';
+        if (!desc) continue;
+        const event = typeof it.event === 'string' && it.event.trim() ? it.event.trim() : null;
+        run(
+          `INSERT INTO contact_attributes(id, contact_id, kind, description, event, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [newId(), c.id, kind, desc, event, now, now]
+        );
+      }
+    }
+  }
+
+  // Rebuild search_index for every listed contact so migrated entries are
+  // discoverable via the LIKE-based search.
+  const listed = all('SELECT * FROM contacts WHERE listed = 1');
+  for (const r of listed) {
+    const parsed = parseContactRow(r);
+    upsertSearch('contact', parsed.id, buildContactBody(parsed));
+  }
+
+  setSetting('attributes_v1_applied', '1');
+}
+
+// List contact_attributes of a given kind, joined with the parent contact.
+// `opts.contact_id` scopes to a single contact (used by contact-detail).
+function listAttributes(kind, opts = {}) {
+  const args = [kind];
+  let where = 'a.kind = ?';
+  if (opts.contact_id) { where += ' AND a.contact_id = ?'; args.push(opts.contact_id); }
+  return all(
+    `SELECT a.id, a.contact_id, a.kind, a.description, a.event,
+            a.created_at, a.updated_at,
+            c.name AS contact_name, c.relationship AS contact_relationship,
+            c.listed AS contact_listed
+       FROM contact_attributes a
+       JOIN contacts c ON c.id = a.contact_id
+      WHERE ${where}
+      ORDER BY (a.event IS NULL), a.event DESC, a.created_at DESC`,
+    args
+  );
+}
+
+function getAttribute(id) {
+  return one('SELECT * FROM contact_attributes WHERE id = ?', [id]);
+}
+
 module.exports = {
   open, get, save, newId, nowStr, all, one, run,
   upsertSearch, deleteSearch, getSetting, setSetting,
   markDirty,
+  parseContactRow, buildContactBody, safeParseArray,
+  listAttributes, getAttribute,
 };

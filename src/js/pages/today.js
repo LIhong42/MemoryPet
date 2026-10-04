@@ -1,5 +1,7 @@
-// src/js/pages/today.js — Today's events + important dates
-import { api, escapeHtml, fmtDate, fmtDateTime } from '../api.js';
+// src/js/pages/today.js — Today's reminders + important dates + events.
+// The original home page's "当前提醒" block has been folded into the top
+// of this page (see PR description).
+import { api, escapeHtml, displayName, fmtDate, fmtDateTime } from '../api.js';
 import { register, navigate } from '../router.js';
 
 export async function render() {
@@ -8,6 +10,7 @@ export async function render() {
   const events = await api.events.listToday();
   const contacts = await api.contacts.list();
   const cById = Object.fromEntries(contacts.map((c) => [c.id, c]));
+  const activeReminders = await api.reminders.listActive();
 
   const today = new Date();
   const m = today.getMonth() + 1;
@@ -23,12 +26,27 @@ export async function render() {
   app.innerHTML = `
     <h1>今日 · ${today.getFullYear()}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}</h1>
 
+    <div class="section-header"><h2>⏰ 当前提醒</h2></div>
+    ${activeReminders.length === 0
+      ? `<div class="empty">暂无待办提醒 ✨</div>`
+      : activeReminders.map((r) => `
+        <div class="card clickable" data-source="${escapeHtml(r.source)}" data-id="${escapeHtml(r.source_id)}" data-action="reminder">
+          <div class="row between">
+            <div>
+              <div><strong>${escapeHtml(r.title)}</strong></div>
+              <div class="meta">${escapeHtml(r.source === 'event' ? '事件' : '重要日期')}${r.contact_name ? ' · ' + escapeHtml(r.contact_name) : ''}</div>
+            </div>
+            <span class="tag">待处理</span>
+          </div>
+        </div>
+      `).join('')}
+
     <div class="section-header"><h2>🎂 重要日期</h2></div>
     ${impDatesAll.length === 0
       ? `<div class="empty">今天没有重要日期</div>`
       : impDatesAll.map((d) => `
         <div class="card">
-          <div><strong>${escapeHtml(d.label)}</strong> · ${escapeHtml(d.contact.first_name)}</div>
+          <div><strong>${escapeHtml(d.label)}</strong> · ${escapeHtml(displayName(d.contact))}</div>
           <div class="meta">${kindLabel(d.kind)}${d.year ? ' · ' + (today.getFullYear() - d.year) + '岁' : ''}</div>
         </div>
       `).join('')}
@@ -39,13 +57,21 @@ export async function render() {
       : events.map((e) => `
         <div class="card clickable" data-id="${escapeHtml(e.id)}">
           <div><strong>${escapeHtml(e.title)}</strong></div>
-          <div class="meta">${fmtDateTime(e.next_fire_at || e.remind_date)} · ${kindLabel(e.remind_kind)}${e.contact_id && cById[e.contact_id] ? ' · ' + escapeHtml(cById[e.contact_id].first_name) : ''}</div>
+          <div class="meta">${fmtDateTime(e.next_fire_at || e.remind_date)} · ${kindLabel(e.remind_kind)}${e.contact_id && cById[e.contact_id] ? ' · ' + escapeHtml(displayName(cById[e.contact_id])) : ''}</div>
         </div>
       `).join('')}
   `;
 
   app.querySelectorAll('.card.clickable').forEach((el) => {
-    el.onclick = () => navigate('/events/' + el.dataset.id);
+    if (el.dataset.action === 'reminder') {
+      el.onclick = () => {
+        window.dispatchEvent(new CustomEvent('open-reminder', {
+          detail: { source: el.dataset.source, source_id: el.dataset.id },
+        }));
+      };
+    } else {
+      el.onclick = () => navigate('/events/' + el.dataset.id);
+    }
   });
 }
 

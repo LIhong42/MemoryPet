@@ -46,7 +46,7 @@ function parseHash() {
 export async function dispatch() {
   const m = parseHash();
   if (!m) {
-    location.hash = '#/';
+    location.hash = '#/today';
     return;
   }
   if (onChangeCb) onChangeCb(m.path);
@@ -65,6 +65,9 @@ export function navigate(path) {
 
 export function start() {
   window.addEventListener('hashchange', dispatch);
-  if (!location.hash) location.hash = '#/';
-  dispatch();
+  if (!location.hash || location.hash === '#' || location.hash === '#/') {
+    location.hash = '#/today';
+  } else {
+    dispatch();
+  }
 }

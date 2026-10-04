@@ -3,54 +3,139 @@ const { ipcMain, app, screen, Menu } = require('electron');
 const db = require('./db');
 const { fmtDateTime, computeNextFireEvent } = require('./time_util');
 
+// Resolve the name to persist. Accepts legacy first_name/last_name for one
+// release cycle so older renderer builds still work after the schema upgrade;
+// prefers the new `name` field when present.
+function resolveName(input) {
+  if (input && typeof input.name === 'string' && input.name.trim()) {
+    return input.name.trim();
+  }
+  const legacy = [input && input.first_name, input && input.last_name]
+    .map((s) => (typeof s === 'string' ? s.trim() : ''))
+    .filter(Boolean)
+    .join(' ');
+  return legacy || '';
+}
+
 function register({ queue, winMain, winPet, setPetState, getPetState, setActiveReminder }) {
   // ---- Contacts ----
   ipcMain.handle('contacts:list', () =>
-    db.all('SELECT * FROM contacts WHERE listed = 1 ORDER BY updated_at DESC'));
+    db.all('SELECT * FROM contacts WHERE listed = 1 ORDER BY updated_at DESC').map(db.parseContactRow));
 
   ipcMain.handle('contacts:get', (_e, id) =>
-    db.one('SELECT * FROM contacts WHERE id = ?', [id]));
+    db.parseContactRow(db.one('SELECT * FROM contacts WHERE id = ?', [id])));
 
+  // contacts:create / contacts:update only write basic info now. The
+  // likes/taboos/gifts data lives in the contact_attributes table and is
+  // managed via the attributes:* handlers below.
   ipcMain.handle('contacts:create', (_e, input) => {
     const id = db.newId();
     const now = db.nowStr();
+    const name = resolveName(input);
+    const relationship = (input && typeof input.relationship === 'string' && input.relationship.trim())
+      ? input.relationship.trim() : null;
     db.run(
-      `INSERT INTO contacts(id, first_name, last_name, nickname, company, job_position,
+      `INSERT INTO contacts(id, name, relationship,
+                            likes_json, taboos_json, gifts_json,
                             listed, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
-      [id, input.first_name || '', input.last_name || '',
-       input.nickname || null, input.company || null, input.job_position || null,
-       now, now]
+       VALUES (?, ?, ?, '[]', '[]', '[]', 1, ?, ?)`,
+      [id, name, relationship, now, now]
     );
-    const body = [
-      input.first_name, input.last_name, input.nickname,
-      input.company, input.job_position,
-    ].filter(Boolean).join(' ');
-    db.upsertSearch('contact', id, body);
-    return db.one('SELECT * FROM contacts WHERE id = ?', [id]);
+    const stored = db.one('SELECT * FROM contacts WHERE id = ?', [id]);
+    const parsed = db.parseContactRow(stored);
+    db.upsertSearch('contact', id, db.buildContactBody(parsed));
+    return parsed;
   });
 
   ipcMain.handle('contacts:update', (_e, id, input) => {
     const now = db.nowStr();
+    const name = resolveName(input);
+    const relationship = (input && typeof input.relationship === 'string' && input.relationship.trim())
+      ? input.relationship.trim() : null;
     db.run(
-      `UPDATE contacts SET first_name=?, last_name=?, nickname=?, company=?, job_position=?,
-                          updated_at=? WHERE id=?`,
-      [input.first_name || '', input.last_name || '',
-       input.nickname || null, input.company || null, input.job_position || null,
-       now, id]
+      `UPDATE contacts SET name=?, relationship=?, updated_at=? WHERE id=?`,
+      [name, relationship, now, id]
     );
-    const body = [
-      input.first_name, input.last_name, input.nickname,
-      input.company, input.job_position,
-    ].filter(Boolean).join(' ');
-    db.upsertSearch('contact', id, body);
-    return db.one('SELECT * FROM contacts WHERE id = ?', [id]);
+    const stored = db.one('SELECT * FROM contacts WHERE id = ?', [id]);
+    const parsed = db.parseContactRow(stored);
+    db.upsertSearch('contact', id, db.buildContactBody(parsed));
+    return parsed;
   });
 
   ipcMain.handle('contacts:delete', (_e, id) => {
     db.run('UPDATE contacts SET listed = 0, updated_at = ? WHERE id = ?',
       [db.nowStr(), id]);
     db.deleteSearch('contact', id);
+    return true;
+  });
+
+  // ---- Contact attributes (likes / taboos / gifts — global table) ----
+  // All likes/taboos/gifts entries live in contact_attributes and are managed
+  // through these handlers. The per-contact sub-pages and the three new global
+  // top-level pages (/likes, /taboos, /gifts) all funnel through here.
+  const ATTR_KINDS = new Set(['like', 'taboo', 'gift']);
+
+  ipcMain.handle('attributes:list', (_e, kind, opts = {}) => {
+    if (!ATTR_KINDS.has(kind)) throw new Error(`unknown attribute kind: ${kind}`);
+    return db.listAttributes(kind, opts || {});
+  });
+
+  ipcMain.handle('attributes:create', (_e, input = {}) => {
+    const kind = input.kind;
+    if (!ATTR_KINDS.has(kind)) throw new Error(`unknown attribute kind: ${kind}`);
+    const description = typeof input.description === 'string' ? input.description.trim() : '';
+    if (!description) throw new Error('description is required');
+    if (!input.contact_id) throw new Error('contact_id is required');
+    if (!db.one('SELECT id FROM contacts WHERE id = ?', [input.contact_id])) {
+      throw new Error(`contact not found: ${input.contact_id}`);
+    }
+    const event = typeof input.event === 'string' && input.event.trim() ? input.event.trim() : null;
+    const id = db.newId();
+    const now = db.nowStr();
+    db.run(
+      `INSERT INTO contact_attributes(id, contact_id, kind, description, event, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [id, input.contact_id, kind, description, event, now, now]
+    );
+    // Sync search_index so the new description is searchable via LIKE.
+    const c = db.parseContactRow(db.one('SELECT * FROM contacts WHERE id = ?', [input.contact_id]));
+    if (c) db.upsertSearch('contact', c.id, db.buildContactBody(c));
+    return db.one(
+      `SELECT a.*, c.name AS contact_name
+         FROM contact_attributes a JOIN contacts c ON c.id = a.contact_id
+        WHERE a.id = ?`, [id]
+    );
+  });
+
+  ipcMain.handle('attributes:update', (_e, id, input = {}) => {
+    if (!db.getAttribute(id)) throw new Error(`attribute not found: ${id}`);
+    const description = typeof input.description === 'string' ? input.description.trim() : '';
+    if (!description) throw new Error('description is required');
+    const event = typeof input.event === 'string' && input.event.trim() ? input.event.trim() : null;
+    const now = db.nowStr();
+    db.run(
+      `UPDATE contact_attributes SET description=?, event=?, updated_at=? WHERE id=?`,
+      [description, event, now, id]
+    );
+    const row = db.one('SELECT contact_id FROM contact_attributes WHERE id = ?', [id]);
+    if (row) {
+      const c = db.parseContactRow(db.one('SELECT * FROM contacts WHERE id = ?', [row.contact_id]));
+      if (c) db.upsertSearch('contact', c.id, db.buildContactBody(c));
+    }
+    return db.one(
+      `SELECT a.*, c.name AS contact_name
+         FROM contact_attributes a JOIN contacts c ON c.id = a.contact_id
+        WHERE a.id = ?`, [id]
+    );
+  });
+
+  ipcMain.handle('attributes:delete', (_e, id) => {
+    const row = db.one('SELECT contact_id FROM contact_attributes WHERE id = ?', [id]);
+    db.run('DELETE FROM contact_attributes WHERE id = ?', [id]);
+    if (row) {
+      const c = db.parseContactRow(db.one('SELECT * FROM contacts WHERE id = ?', [row.contact_id]));
+      if (c) db.upsertSearch('contact', c.id, db.buildContactBody(c));
+    }
     return true;
   });
 
@@ -187,8 +272,14 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
     q = (q || '').trim();
     if (!q) return { contacts: [], events: [], important_dates: [] };
     const like = `%${q}%`;
-    const contacts = db.all('SELECT * FROM contacts WHERE listed=1 AND (first_name LIKE ? OR last_name LIKE ? OR nickname LIKE ? OR company LIKE ?)',
-      [like, like, like, like]);
+    const contacts = db.all(
+      `SELECT * FROM contacts WHERE listed=1 AND (
+        name LIKE ? OR relationship LIKE ?
+        OR EXISTS (SELECT 1 FROM contact_attributes a
+                   WHERE a.contact_id = contacts.id AND a.description LIKE ?)
+      )`,
+      [like, like, like]
+    ).map(db.parseContactRow);
     const events = db.all('SELECT * FROM events WHERE title LIKE ? OR description LIKE ?', [like, like]);
     const dates = db.all('SELECT * FROM important_dates WHERE label LIKE ?', [like]);
     return { contacts, events, important_dates: dates };

@@ -230,3 +230,59 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
   border: 1px solid var(--border);
   font-size: 11px;
 }
+
+/* Contact edit form: inline list editors for likes / taboos / gifts. */
+.list-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+.list-row input[type="text"] { flex: 2; }
+.list-row input[type="date"] { flex: 1; min-width: 140px; }
+.list-row .row-del { width: 32px; flex-shrink: 0; }
+.list-section { margin-top: 8px; }
+.list-section .list-empty {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 6px 0;
+}
+
+/* Contact detail page: search + event-filter dropdown share a row. */
+.filter-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.filter-row .section-search { flex: 2; min-width: 0; }
+.filter-row .section-event-filter { flex: 1; min-width: 140px; }
+
+/* Global attributes pages: search + contact-filter dropdown share a row.
+   Input takes the wider 2/3, dropdown takes the narrower 1/3. */
+.filter-row #attr-search { flex: 2; min-width: 0; }
+.filter-row #attr-contact-filter { flex: 1; min-width: 140px; }
+
+/* Global attributes page (/likes, /taboos, /gifts): per-row card with avatar
+   + contact name + description + edit/delete actions. Reuses .card / .row /
+   .avatar so no new primitives needed; just spacing tweaks. */
+.attribute-row .row { gap: 12px; align-items: center; }
+.attribute-row .row > div { min-width: 0; }
+
+/* Inline edit row inside contact_detail section lists. */
+.section-edit-desc,
+.section-edit-event {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  background: white;
+}
+.section-edit-desc:focus,
+.section-edit-event:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}

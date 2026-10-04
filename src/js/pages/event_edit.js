@@ -1,5 +1,5 @@
 // src/js/pages/event_edit.js — create/edit events + event detail
-import { api, escapeHtml, fmtDateTime, toast } from '../api.js';
+import { api, escapeHtml, displayName, fmtDateTime, toast } from '../api.js';
 import { register, navigate } from '../router.js';
 
 async function renderEdit(args, params) {
@@ -139,10 +139,6 @@ async function renderDetail(args) {
       ${ev.description ? `<p style="margin-top:12px">${escapeHtml(ev.description)}</p>` : ''}
     </div>
   `;
-}
-
-function displayName(c) {
-  return [c.first_name, c.last_name].filter(Boolean).join(' ') || c.nickname || '(无名)';
 }
 
 function kindLabel(k) {

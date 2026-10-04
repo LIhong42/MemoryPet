@@ -13,6 +13,12 @@ export const api = {
     update: (id, input) => M.contacts.update(id, input),
     delete: (id) => M.contacts.delete(id),
   },
+  attributes: {
+    list:   (kind, opts) => M.attributes.list(kind, opts || {}),
+    create: (input) => M.attributes.create(input),
+    update: (id, input) => M.attributes.update(id, input),
+    delete: (id) => M.attributes.delete(id),
+  },
   importantDates: {
     list: (contactId) => M.importantDates.list(contactId),
     create: (contactId, input) => M.importantDates.create(contactId, input),
@@ -75,6 +81,15 @@ export function fmtDate(s) {
   return `${m[1]}-${m[2]}-${m[3]}`;
 }
 
+// Local-time YYYY-MM-DD for today. Used by contact-edit pages as the default
+// "event" value when the user adds a list row without picking a date — saves
+// stay useful even when the user is in a hurry and skips the date field.
+export function todayYmd() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 export function fmtDateTime(s) {
   if (!s) return '';
   const m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})/.exec(s);
@@ -91,4 +106,12 @@ export function escapeHtml(s) {
 export function firstChar(s) {
   if (!s) return '?';
   return s.trim().charAt(0).toUpperCase();
+}
+
+// Single source of truth for "how do we show this contact's name"? Used by
+// every page that renders a contact (list, detail, home, today, events,
+// search, event_edit). Falls back to "(无名)" for contacts with an empty
+// `name` field.
+export function displayName(c) {
+  return (c && typeof c.name === 'string' && c.name.trim()) || '(无名)';
 }

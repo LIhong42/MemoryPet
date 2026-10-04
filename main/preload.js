@@ -10,6 +10,13 @@ contextBridge.exposeInMainWorld('mp', {
     update: (id, input) => ipcRenderer.invoke('contacts:update', id, input),
     delete: (id) => ipcRenderer.invoke('contacts:delete', id),
   },
+  // contact attributes (likes / taboos / gifts — global table)
+  attributes: {
+    list:   (kind, opts) => ipcRenderer.invoke('attributes:list', kind, opts || {}),
+    create: (input) => ipcRenderer.invoke('attributes:create', input),
+    update: (id, input) => ipcRenderer.invoke('attributes:update', id, input),
+    delete: (id) => ipcRenderer.invoke('attributes:delete', id),
+  },
   // important dates
   importantDates: {
     list: (contactId) => ipcRenderer.invoke('important_dates:list', contactId),

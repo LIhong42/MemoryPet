@@ -1,5 +1,5 @@
 // src/js/pages/contacts_list.js — list + create
-import { api, escapeHtml, firstChar, toast } from '../api.js';
+import { api, escapeHtml, firstChar, displayName, toast } from '../api.js';
 import { register, navigate } from '../router.js';
 
 export async function render() {
@@ -16,10 +16,10 @@ export async function render() {
       : contacts.map((c) => `
         <div class="list-item" data-id="${escapeHtml(c.id)}">
           <div class="row">
-            <div class="avatar">${escapeHtml(firstChar(c.first_name))}</div>
+            <div class="avatar">${escapeHtml(firstChar(c.name))}</div>
             <div>
               <div><strong>${escapeHtml(displayName(c))}</strong></div>
-              <div class="meta">${escapeHtml(c.company || c.job_position || '')}</div>
+              <div class="meta">${escapeHtml(c.relationship || '')}</div>
             </div>
           </div>
         </div>
@@ -29,10 +29,6 @@ export async function render() {
     el.onclick = () => navigate('/contacts/' + el.dataset.id);
   });
   document.getElementById('new-contact').onclick = () => navigate('/contacts/new');
-}
-
-function displayName(c) {
-  return [c.first_name, c.last_name].filter(Boolean).join(' ') || c.nickname || '(无名)';
 }
 
 register('/contacts', render);

@@ -87,12 +87,8 @@ function scanAndFire({ queue, getPetState, setPetState, setActiveReminder }) {
 
     let contactName = null;
     if (ev.contact_id) {
-      const c = db.one(
-        `SELECT COALESCE(NULLIF(first_name || ' ' || last_name, ''), nickname) AS name
-         FROM contacts WHERE id = ?`,
-        [ev.contact_id]
-      );
-      if (c) contactName = c.name;
+      const c = db.one('SELECT name FROM contacts WHERE id = ?', [ev.contact_id]);
+      if (c && c.name) contactName = c.name;
     }
 
     fired.push({
@@ -136,12 +132,8 @@ function scanAndFire({ queue, getPetState, setPetState, setActiveReminder }) {
     }
 
     let contactName = null;
-    const c = db.one(
-      `SELECT COALESCE(NULLIF(first_name || ' ' || last_name, ''), nickname) AS name
-       FROM contacts WHERE id = ?`,
-      [d.contact_id]
-    );
-    if (c) contactName = c.name;
+    const c = db.one('SELECT name FROM contacts WHERE id = ?', [d.contact_id]);
+    if (c && c.name) contactName = c.name;
 
     let titleStr = d.label;
     if (d.year) {

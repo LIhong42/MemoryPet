@@ -1,11 +1,16 @@
-// src/js/pages/contact_edit.js — create or edit a contact
+// src/js/pages/contact_edit.js — create or edit a contact (basic info only).
+//
+// Likes / taboos / gifts used to be edited inline here, but they now live in
+// the global contact_attributes table and are managed from the dedicated
+// `/likes`, `/taboos`, `/gifts` top-level pages. The reminder card below
+// links the user there.
 import { api, escapeHtml, toast } from '../api.js';
 import { register, navigate } from '../router.js';
 
 async function render(args) {
   const app = document.getElementById('app');
   const isNew = !args.id;
-  let c = { first_name: '', last_name: '', nickname: '', company: '', job_position: '' };
+  let c = { name: '', relationship: '' };
   if (!isNew) {
     c = await api.contacts.get(args.id);
   }
@@ -15,32 +20,37 @@ async function render(args) {
       <h1>${isNew ? '新建联系人' : '编辑联系人'}</h1>
       <a class="inline-link" href="${isNew ? '#/contacts' : '#/contacts/' + c.id}">取消</a>
     </div>
+
     <div class="card">
-      <div class="form-row">
-        <div class="field"><label>名 *</label><input type="text" id="f-first" value="${escapeHtml(c.first_name)}"/></div>
-        <div class="field"><label>姓</label><input type="text" id="f-last" value="${escapeHtml(c.last_name || '')}"/></div>
+      <div class="section-header"><h2>基本信息</h2></div>
+      <div class="field">
+        <label>姓名 *</label>
+        <input type="text" id="f-name" value="${escapeHtml(c.name || '')}" autofocus/>
       </div>
-      <div class="field"><label>昵称</label><input type="text" id="f-nick" value="${escapeHtml(c.nickname || '')}"/></div>
-      <div class="form-row">
-        <div class="field"><label>公司</label><input type="text" id="f-company" value="${escapeHtml(c.company || '')}"/></div>
-        <div class="field"><label>职位</label><input type="text" id="f-job" value="${escapeHtml(c.job_position || '')}"/></div>
+      <div class="field">
+        <label>与本人的关系</label>
+        <input type="text" id="f-relationship" placeholder="家人 / 朋友 / 同事..."
+               value="${escapeHtml(c.relationship || '')}"/>
       </div>
-      <div class="row" style="margin-top:14px; gap:8px;">
-        <button class="btn" id="save">${isNew ? '创建' : '保存'}</button>
-        ${!isNew ? `<button class="btn danger" id="del">删除</button>` : ''}
-      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-header"><h2>喜好 / 忌讳 / 礼物</h2></div>
+      <div class="meta">在顶部导航的「<a class="inline-link" href="#/likes">喜好</a> / <a class="inline-link" href="#/taboos">忌讳</a> / <a class="inline-link" href="#/gifts">礼物</a>」页面统一管理。</div>
+    </div>
+
+    <div class="row" style="margin-top:14px; gap:8px;">
+      <button class="btn" id="save">${isNew ? '创建' : '保存'}</button>
+      ${!isNew ? `<button class="btn danger" id="del">删除</button>` : ''}
     </div>
   `;
 
   document.getElementById('save').onclick = async () => {
     const input = {
-      first_name: document.getElementById('f-first').value.trim(),
-      last_name: document.getElementById('f-last').value.trim(),
-      nickname: document.getElementById('f-nick').value.trim() || null,
-      company: document.getElementById('f-company').value.trim() || null,
-      job_position: document.getElementById('f-job').value.trim() || null,
+      name: document.getElementById('f-name').value.trim(),
+      relationship: document.getElementById('f-relationship').value.trim() || null,
     };
-    if (!input.first_name) { toast('请填写「名」'); return; }
+    if (!input.name) { toast('请填写「姓名」'); return; }
     if (isNew) {
       const r = await api.contacts.create(input);
       toast('已创建');
@@ -53,7 +63,7 @@ async function render(args) {
   };
   if (!isNew) {
     document.getElementById('del').onclick = async () => {
-      if (!confirm('确认删除该联系人？关联事件将变为独立事件。')) return;
+      if (!confirm('确认删除该联系人？关联事件将变为独立事件，喜好/忌讳/礼物条目也会一并删除。')) return;
       await api.contacts.delete(c.id);
       toast('已删除');
       navigate('/contacts');

@@ -1,5 +1,5 @@
 // src/js/pages/events.js — events list (all / filtered)
-import { api, escapeHtml, fmtDateTime, toast } from '../api.js';
+import { api, escapeHtml, displayName, fmtDateTime, toast } from '../api.js';
 import { register, navigate } from '../router.js';
 
 async function render(args, params) {
@@ -25,7 +25,7 @@ async function render(args, params) {
           <div class="row between">
             <div>
               <div><strong>${escapeHtml(e.title)}</strong></div>
-              <div class="meta">${fmtDateTime(e.next_fire_at || e.remind_date)} · ${kindLabel(e.remind_kind)}${e.contact_id && cById[e.contact_id] ? ' · ' + escapeHtml(cById[e.contact_id].first_name) : ''}${e.active ? '' : ' · 已结束'}</div>
+              <div class="meta">${fmtDateTime(e.next_fire_at || e.remind_date)} · ${kindLabel(e.remind_kind)}${e.contact_id && cById[e.contact_id] ? ' · ' + escapeHtml(displayName(cById[e.contact_id])) : ''}${e.active ? '' : ' · 已结束'}</div>
             </div>
             <div>
               ${e.remind ? '<span class="tag">提醒</span>' : ''}
