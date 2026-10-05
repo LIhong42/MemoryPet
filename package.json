@@ -4,7 +4,7 @@
   "description": "MemoryPet — local-first relationship & reminders with a desktop pet",
   "main": "main/main.js",
   "author": "MemoryPet",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "scripts": {
     "start": "node scripts/run-electron.js .",
     "dev": "node scripts/run-electron.js . --dev",

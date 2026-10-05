@@ -107,3 +107,33 @@ npm run build
 - Windows 用户的 shell 全局设置了 `ELECTRON_RUN_AS_NODE=1`，会导致 `require('electron')` 返回字符串而非 API。已用 `scripts/run-electron.js` 启动器绕过。
 - electron-builder 下载 winCodeSign 时遇 macOS symlink 失败（无管理员权限无法创建符号链接）。`npm run build:dir` 不受影响。
 - 不支持代码签名（.exe 没有 Authenticode 签名，Windows SmartScreen 可能警告）。
+
+## License
+
+本项目基于 [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0) 开源。
+
+```
+Copyright 2026 MemoryPet
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+```
+
+除非适用法律要求或经书面同意，根据本许可证分发的软件按"原样"分发，
+不附带任何明示或暗示的保证或条件。请参阅许可证以了解具体的权限和限制。
+
+### 主要权限
+
+- ✅ 商用、可修改、可分发、专利授权
+- ✅ 可与闭源代码混合使用（无 Copyleft 传染性）
+
+### 主要义务
+
+- 在所有副本/衍生作品中保留版权声明和许可证
+- 修改后的文件必须标注已修改
+- 包含 NOTICE 文件（如提供）必须在衍生作品中传递其中的归属声明
+
+详见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。
