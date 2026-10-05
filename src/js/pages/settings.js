@@ -6,6 +6,7 @@ const SPECIES_OPTIONS = [
   { value: 'cat',  label: '🐱 小猫' },
   { value: 'dog',  label: '🐶 小狗' },
   { value: 'bird', label: '🐦 小鸟' },
+  { value: 'miku', label: '🎤 初音未来' },
 ];
 
 async function render() {
@@ -49,6 +50,9 @@ async function render() {
       </div>
       <p class="meta" style="margin-top:8px">
         切换形象后立刻生效；自动行走开启时，宠物会在桌面上随机走路、跳跃、睡觉；关闭后宠物原地浮动。
+      </p>
+      <p class="meta" style="margin-top:4px">
+        🎤 初音未来：<strong>单击挥手打招呼</strong>，<strong>双击开嗓唱歌</strong>，空闲时会主动哼一段♪。
       </p>
     </div>
 

@@ -13,9 +13,9 @@
 const { screen } = require('electron');
 
 const TICK_MS = 100;
-const PET_W = 200;
-const PET_H = 220;
-const VALID_SPECIES = new Set(['cat', 'dog', 'bird']);
+const PET_W = 220;
+const PET_H = 240;
+const VALID_SPECIES = new Set(['cat', 'dog', 'bird', 'miku']);
 
 class PetController {
   constructor({ winPet, db }) {
@@ -25,7 +25,7 @@ class PetController {
     // Movement state. The pet walks in a direction at a step velocity (per
     // tick) for a random duration, then either turns, switches to idle /
     // sleep / jump, or keeps walking in the same direction.
-    this.action = 'idle';      // 'idle' | 'walking' | 'jumping' | 'sleeping'
+    this.action = 'idle';      // 'idle' | 'walking' | 'jumping' | 'sleeping' | 'sing' | 'wave'
     this.actionDirection = 1;  // -1 = left, +1 = right
     this.actionStepVel = 2;    // px per tick while walking
     this.actionUntil = 0;      // epoch ms; controller switches out of current action after
@@ -36,6 +36,11 @@ class PetController {
     this.enabled = db.getSetting('pet_walk_enabled') !== '0';
     this.species = VALID_SPECIES.has(db.getSetting('pet_species'))
       ? db.getSetting('pet_species') : 'cat';
+    // One-shot action (miku wave / sing). When set we run that action for
+    // `oneShotUntil`, then restore the underlying behavior. This runs on top
+    // of the regular idle/walk/jump/sleep state machine.
+    this.oneShotAction = null;     // 'wave' | 'sing' | null
+    this.oneShotUntil = 0;
   }
 
   start() {
@@ -67,6 +72,15 @@ class PetController {
     }
   }
 
+  // Miku 专属：触发一次性动作（wave / sing）。会暂时接管渲染端的
+  // data-action，到时间后自动恢复到底层动作（idle/walking/...）。
+  triggerOneShot(action, ms) {
+    if (action !== 'wave' && action !== 'sing') return;
+    this.oneShotAction = action;
+    this.oneShotUntil = Date.now() + Math.max(300, ms || 1500);
+    this.broadcastAction();
+  }
+
   // Called from the drag handler on every move-by call; we pause for `ms` so
   // the pet doesn't run away right after the user releases the cursor.
   setPaused(ms) {
@@ -93,8 +107,13 @@ class PetController {
 
   broadcastAction() {
     if (!this.win || this.win.isDestroyed()) return;
+    // One-shot action overlays the underlying state. Underneath, the pet
+    // keeps walking/jumping/etc.; the renderer just plays the cute one-shot
+    // animation on top.
+    const displayed = (this.oneShotUntil > Date.now() && this.oneShotAction)
+      ? this.oneShotAction : this.action;
     this.win.webContents.send('pet:action-changed', {
-      action: this.action,
+      action: displayed,
       direction: this.actionDirection > 0 ? 'right' : 'left',
     });
   }
@@ -113,10 +132,23 @@ class PetController {
     if (this._paused()) {
       // Treat as idle visually but don't pick a new action — we resume when
       // the pause window ends.
+      this._checkOneShotExpiry();
       return;
     }
 
     const now = Date.now();
+    // Miku 专属：闲置时偶尔主动唱一段歌，超时自动恢复
+    if (this.species === 'miku' && this.action === 'idle'
+        && !this.oneShotAction
+        && now >= this._pickNextAt) {
+      // 18% 概率在 idle 状态下自动开嗓（让桌面常有小惊喜）
+      if (Math.random() < 0.18) {
+        this.triggerOneShot('sing', 2200 + Math.floor(Math.random() * 1800));
+        this._pickNextAt = now + 8000 + Math.floor(Math.random() * 8000);
+        return;
+      }
+    }
+    this._checkOneShotExpiry();
     if (this.action === 'idle') {
       if (now >= this._pickNextAt) this._startRandomAction();
       return;
@@ -136,6 +168,14 @@ class PetController {
         this.broadcastAction();
       }
       return;
+    }
+  }
+
+  _checkOneShotExpiry() {
+    if (this.oneShotAction && Date.now() >= this.oneShotUntil) {
+      this.oneShotAction = null;
+      this.oneShotUntil = 0;
+      this.broadcastAction();
     }
   }
 

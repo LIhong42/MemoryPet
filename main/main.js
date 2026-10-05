@@ -72,8 +72,8 @@ function createWindows() {
   const petY = parseInt(db.getSetting('pet_y') || '200', 10);
 
   winPet = new BrowserWindow({
-    width: 200,
-    height: 220,
+    width: 220,
+    height: 240,
     x: petX,
     y: petY,
     frame: false,

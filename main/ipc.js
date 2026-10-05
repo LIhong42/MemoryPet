@@ -823,7 +823,7 @@ function normFreeText(s) {
   // The PetController (main process) also reads them on construction.
   ipcMain.handle('pet:get_species', () => {
     const v = db.getSetting('pet_species');
-    return (v === 'dog' || v === 'bird') ? v : 'cat';
+    return (v === 'dog' || v === 'bird' || v === 'miku') ? v : 'cat';
   });
   ipcMain.handle('pet:set_species', (_e, species) => {
     if (petController && typeof petController.setSpecies === 'function') {
@@ -842,6 +842,14 @@ function normFreeText(s) {
   ipcMain.handle('pet:set_paused', (_e, ms) => {
     if (petController && typeof petController.setPaused === 'function') {
       petController.setPaused(ms);
+    }
+    return true;
+  });
+
+  // Miku 专属：触发一次性动画（wave / sing），到时间后自动恢复到 idle。
+  ipcMain.handle('pet:trigger_action', (_e, action, ms) => {
+    if (petController && typeof petController.triggerOneShot === 'function') {
+      petController.triggerOneShot(action, ms);
     }
     return true;
   });

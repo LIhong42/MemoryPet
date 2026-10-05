@@ -1,0 +1,329 @@
+<svg viewBox="0 0 200 224" width="220" height="246" xmlns="http://www.w3.org/2000/svg" aria-label="miku">
+  <defs>
+    <!-- 主色：提亮一些，更接近参考图的明青色 -->
+    <linearGradient id="miku-hair" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#9EEDDF"/>
+      <stop offset="55%"  stop-color="#4FCFC0"/>
+      <stop offset="100%" stop-color="#2BB3AB"/>
+    </linearGradient>
+    <linearGradient id="miku-hair-d" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#2BB3AB"/>
+      <stop offset="100%" stop-color="#1A8A85"/>
+    </linearGradient>
+    <!-- 眼睛 -->
+    <linearGradient id="miku-eye" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#A6F1F1"/>
+      <stop offset="40%"  stop-color="#3DCBE0"/>
+      <stop offset="100%" stop-color="#1B7FA0"/>
+    </linearGradient>
+    <linearGradient id="miku-iris" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#2BBFE0"/>
+      <stop offset="100%" stop-color="#0F5A85"/>
+    </linearGradient>
+    <!-- 皮肤 -->
+    <linearGradient id="miku-skin" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#FFF6EE"/>
+      <stop offset="100%" stop-color="#FFE0CE"/>
+    </linearGradient>
+    <!-- 袖子 -->
+    <linearGradient id="miku-sleeve" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#262626"/>
+      <stop offset="100%" stop-color="#0e0e0e"/>
+    </linearGradient>
+  </defs>
+
+  <!--
+    关键还原点（参考 vocaloid 风格）：
+    1) 头顶窄小、左右各一束马尾 + 几缕侧发即可披发
+    2) 双马尾是独立的细长发束，发束间有缝隙，能"看到"背景
+    3) 刘海极少：只有额头中央一缕细 V 字 + 两侧各一小缕
+    4) 大眼睛 + 嘴角上扬笑口
+    5) 白衬衫 + 黑色外套 + 青色领带 + 黑色百褶裙
+    6) 黑长袖手套 + 黑色过膝袜 + 青色环边
+  -->
+
+  <!-- ===== 双马尾（细长独立发束，发根紧贴头顶，加宽+外翘+内部高光）===== -->
+  <!-- 左侧马尾：根部上移到 (60, 46)，加宽到 24px，尾部外翘 -->
+  <g class="twin-tail tail-l">
+    <!-- 主束（外侧） -->
+    <path d="M 60 46
+             C 38 56 24 90 22 130
+             C 20 162 24 184 22 188
+             Q 30 198 42 190
+             C 36 162 38 132 46 100
+             C 52 78 58 60 64 46 Z"
+          fill="url(#miku-hair)"/>
+    <!-- 高光主束（外侧） -->
+    <path d="M 34 78 C 28 110 26 150 30 184" fill="none" stroke="#E8FAF6" stroke-width="1.6" opacity="0.85" stroke-linecap="round"/>
+    <!-- 高光主束（内侧） -->
+    <path d="M 42 70 C 38 100 38 142 40 180" fill="none" stroke="#C6F5EF" stroke-width="1.2" opacity="0.6" stroke-linecap="round"/>
+    <!-- 内侧细分一缕（窄长条，深色阴影） -->
+    <path d="M 56 50
+             C 50 76 46 110 46 142
+             C 46 170 50 184 54 186
+             Q 58 188 58 184
+             C 54 158 54 124 58 100
+             C 60 80 62 60 64 48 Z"
+          fill="url(#miku-hair-d)" opacity="0.85"/>
+  </g>
+  <!-- 右侧马尾：对称设计 -->
+  <g class="twin-tail tail-r">
+    <path d="M 140 46
+             C 162 56 176 90 178 130
+             C 180 162 176 184 178 188
+             Q 170 198 158 190
+             C 164 162 162 132 154 100
+             C 148 78 142 60 136 46 Z"
+          fill="url(#miku-hair)"/>
+    <path d="M 166 78 C 172 110 174 150 170 184" fill="none" stroke="#E8FAF6" stroke-width="1.6" opacity="0.85" stroke-linecap="round"/>
+    <path d="M 158 70 C 162 100 162 142 160 180" fill="none" stroke="#C6F5EF" stroke-width="1.2" opacity="0.6" stroke-linecap="round"/>
+    <path d="M 144 50
+             C 150 76 154 110 154 142
+             C 154 170 150 184 146 186
+             Q 142 188 142 184
+             C 146 158 146 124 142 100
+             C 140 80 138 60 136 48 Z"
+          fill="url(#miku-hair-d)" opacity="0.85"/>
+  </g>
+
+  <!-- ===== 躯干（颈+肩+上身+裙）===== -->
+  <path d="M 90 112 L 90 124 L 110 124 L 110 112 Z" fill="url(#miku-skin)"/>
+  <ellipse cx="100" cy="120" rx="14" ry="2.5" fill="#e8c4b8" opacity="0.5"/>
+
+  <!-- 上衣（白衬衫 + 黑色外套） -->
+  <path class="body" d="M 70 124 Q 72 120 80 118 L 120 118 Q 128 120 130 124
+                          L 134 162 L 66 162 Z"
+        fill="#ffffff"/>
+  <path d="M 70 124 Q 72 120 80 118 L 88 118 L 88 162 L 66 162 Z"
+        fill="#1a1a1a"/>
+  <path d="M 130 124 Q 128 120 120 118 L 112 118 L 112 162 L 134 162 Z"
+        fill="#1a1a1a"/>
+  <!-- 领结（青色领带结） -->
+  <polygon points="100,118 93,123 100,128 107,123" fill="#39C5BB"/>
+  <polygon points="100,128 96,134 100,150 104,134" fill="#39C5BB"/>
+  <polygon points="96,128 104,128 104,134 96,134" fill="#1A8A85"/>
+  <line x1="88" y1="118" x2="100" y2="128" stroke="#39C5BB" stroke-width="1.5"/>
+  <line x1="112" y1="118" x2="100" y2="128" stroke="#39C5BB" stroke-width="1.5"/>
+
+  <!-- 黑色百褶裙 -->
+  <path class="skirt" d="M 66 162 L 134 162 L 142 188 Q 100 196 58 188 Z"
+        fill="#1a1a1a"/>
+  <path d="M 58 188 Q 100 196 142 188" fill="none" stroke="#39C5BB" stroke-width="2.2"/>
+  <!-- 裙褶 -->
+  <line x1="74" y1="164" x2="70" y2="186" stroke="#3a3a3a" stroke-width="0.7"/>
+  <line x1="86" y1="164" x2="84" y2="190" stroke="#3a3a3a" stroke-width="0.7"/>
+  <line x1="100" y1="164" x2="100" y2="192" stroke="#3a3a3a" stroke-width="0.7"/>
+  <line x1="114" y1="164" x2="116" y2="190" stroke="#3a3a3a" stroke-width="0.7"/>
+  <line x1="126" y1="164" x2="130" y2="186" stroke="#3a3a3a" stroke-width="0.7"/>
+
+  <!-- ===== 头部（窄顶、小脸、稀疏几缕发）===== -->
+  <g class="head-group">
+    <!--
+      头顶壳：圆润弧形头骨 + 两侧外凸弧度
+      - 头顶圆顶提升到 (100, 28)
+      - 左右两侧外凸 4px（x=66/134 处向外展）
+      - 整体呈"圆润东瓜"而非"圆角方盒"
+      - 关键：底部沿脸部椭圆上沿平直裁切（不覆盖下巴）
+    -->
+    <path d="
+      M 100 28
+      C 84 26 70 32 66 42
+      C 60 52 60 60 66 68
+      C 60 76 58 88 64 96
+      C 60 106 62 116 70 118
+      C 76 120 82 116 86 100
+      C 86 92 88 86 92 82
+      C 94 80 96 78 96 78
+      L 96 80
+      Q 100 82 104 80
+      L 104 78
+      C 104 78 106 80 108 82
+      C 112 86 114 92 114 100
+      C 118 116 124 120 130 118
+      C 138 116 140 106 136 96
+      C 142 88 140 76 134 68
+      C 140 60 140 52 134 42
+      C 130 32 116 26 100 28 Z"
+      fill="url(#miku-hair)"
+      stroke="#1A8A85" stroke-width="0.5" stroke-opacity="0.4"/>
+
+    <!-- 脸部（小圆脸）：下巴位置 = 皮肤色（防止"绿色胡须"） -->
+    <ellipse class="head" cx="100" cy="98" rx="20" ry="24" fill="url(#miku-skin)"/>
+
+    <!--
+      多束细发刘海（7 束）：修复头顶中央"秃顶"问题
+      - 中央 3 束（V 字 + 两侧细发）
+      - 左 2 束斜刘海
+      - 右 2 束斜刘海
+      - 底端参差不齐（y=78~88）
+    -->
+    <!-- 中央 1：V 字尖刘海（最细最长） -->
+    <path class="bangs" d="M 99 64 L 96 80 L 99 84 L 100 72 L 104 80 L 101 64 Z"
+          fill="url(#miku-hair-d)"/>
+    <!-- 中央 2：左侧短细发 -->
+    <path class="bangs" d="M 93 66 Q 91 72 92 80 Q 95 82 96 76 Q 96 70 95 66 Z"
+          fill="url(#miku-hair)"/>
+    <!-- 中央 3：右侧短细发 -->
+    <path class="bangs" d="M 107 66 Q 109 72 108 80 Q 105 82 104 76 Q 104 70 105 66 Z"
+          fill="url(#miku-hair)"/>
+    <!-- 左侧刘海 1（外侧长斜） -->
+    <path class="bangs" d="M 86 66
+             Q 82 72 82 82
+             Q 84 86 88 84
+             Q 90 78 90 68 Z"
+          fill="url(#miku-hair)"/>
+    <!-- 左侧刘海 2（内侧短斜） -->
+    <path class="bangs" d="M 80 70
+             Q 78 76 80 84
+             Q 84 84 84 78
+             Q 84 72 82 70 Z"
+          fill="url(#miku-hair-d)" opacity="0.7"/>
+    <!-- 右侧刘海 1（外侧长斜） -->
+    <path class="bangs" d="M 114 66
+             Q 118 72 118 82
+             Q 116 86 112 84
+             Q 110 78 110 68 Z"
+          fill="url(#miku-hair)"/>
+    <!-- 右侧刘海 2（内侧短斜） -->
+    <path class="bangs" d="M 120 70
+             Q 122 76 120 84
+             Q 116 84 116 78
+             Q 116 72 118 70 Z"
+          fill="url(#miku-hair-d)" opacity="0.7"/>
+    <!-- 左侧耳际小缕（贴在脸左侧，从耳根垂下） -->
+    <path d="M 78 78
+             Q 74 88 74 104
+             Q 76 110 80 110
+             Q 82 100 82 88
+             Q 82 80 80 78 Z"
+          fill="url(#miku-hair)"/>
+    <!-- 右侧耳际小缕 -->
+    <path d="M 122 78
+             Q 126 88 118 110
+             Q 120 100 120 88
+             Q 120 80 122 78 Z"
+          fill="url(#miku-hair)"/>
+
+    <!-- 头顶高光弧线（新增 3 条） -->
+    <path d="M 86 38 C 92 32 100 30 108 32" fill="none" stroke="#E8FAF6" stroke-width="1.6" stroke-linecap="round" opacity="0.85"/>
+    <path d="M 82 50 C 90 42 100 40 110 42" fill="none" stroke="#C6F5EF" stroke-width="1.2" stroke-linecap="round" opacity="0.6"/>
+    <path d="M 80 62 C 88 56 96 54 104 56" fill="none" stroke="#C6F5EF" stroke-width="1.0" stroke-linecap="round" opacity="0.5"/>
+    <!-- 后发边缘高光：仅延伸到耳后，不深入下巴区域（避免模拟"头发"） -->
+    <path d="M 66 76 C 62 90 64 104 68 114" fill="none" stroke="#C6F5EF" stroke-width="1.2" stroke-linecap="round" opacity="0.55"/>
+    <path d="M 134 76 C 138 90 136 104 132 114" fill="none" stroke="#C6F5EF" stroke-width="1.2" stroke-linecap="round" opacity="0.55"/>
+
+    <!-- 头顶耳机装饰（参考图特征：黑色圆形耳机盘 + 青色细线） -->
+    <!-- 左耳机盘 -->
+    <ellipse cx="74" cy="42" rx="5" ry="3" fill="#1a1a1a" opacity="0.95"/>
+    <ellipse cx="74" cy="42" rx="3.5" ry="2" fill="#2BB3AB" opacity="0.6"/>
+    <ellipse cx="74" cy="42" rx="1.2" ry="1.2" fill="#39C5BB"/>
+    <!-- 左耳机连接线（沿头顶弯曲） -->
+    <path d="M 78 42 C 84 36 92 35 100 35"
+          fill="none" stroke="#1a1a1a" stroke-width="1.0" opacity="0.85" stroke-linecap="round"/>
+    <!-- 右耳机连接线 -->
+    <path d="M 122 42 C 116 36 108 35 100 35"
+          fill="none" stroke="#1a1a1a" stroke-width="1.0" opacity="0.85" stroke-linecap="round"/>
+    <!-- 右耳机盘 -->
+    <ellipse cx="126" cy="42" rx="5" ry="3" fill="#1a1a1a" opacity="0.95"/>
+    <ellipse cx="126" cy="42" rx="3.5" ry="2" fill="#2BB3AB" opacity="0.6"/>
+    <ellipse cx="126" cy="42" rx="1.2" ry="1.2" fill="#39C5BB"/>
+
+    <!-- 大发夹(左)：参考图样式 -->
+    <g class="hairclip hairclip-l">
+      <rect x="58" y="56" width="18" height="10" rx="2" fill="#1a1a1a"/>
+      <rect x="60" y="58" width="14" height="6" rx="1" fill="#ff6b9d"/>
+      <circle cx="67" cy="61" r="1.8" fill="#ffffff"/>
+    </g>
+    <!-- 大发夹(右) -->
+    <g class="hairclip hairclip-r">
+      <rect x="124" y="56" width="18" height="10" rx="2" fill="#1a1a1a"/>
+      <rect x="126" y="58" width="14" height="6" rx="1" fill="#ff6b9d"/>
+      <circle cx="133" cy="61" r="1.8" fill="#ffffff"/>
+    </g>
+
+    <!-- 眼睛（参考图：大而圆，水汪汪）-->
+    <g class="eyes-open">
+      <ellipse class="eye eye-l" cx="89" cy="100" rx="7" ry="9.5" fill="#ffffff"/>
+      <ellipse class="eye eye-r" cx="111" cy="100" rx="7" ry="9.5" fill="#ffffff"/>
+      <ellipse cx="89" cy="101" rx="5.6" ry="7.8" fill="url(#miku-eye)"/>
+      <ellipse cx="111" cy="101" rx="5.6" ry="7.8" fill="url(#miku-eye)"/>
+      <ellipse cx="89" cy="101" rx="2.4" ry="5.4" fill="url(#miku-iris)"/>
+      <ellipse cx="111" cy="101" rx="2.4" ry="5.4" fill="url(#miku-iris)"/>
+      <ellipse cx="91" cy="97" rx="2.6" fill="#ffffff"/>
+      <ellipse cx="113" cy="97" rx="2.6" fill="#ffffff"/>
+      <circle cx="87" cy="104" r="0.9" fill="#ffffff"/>
+      <circle cx="109" cy="104" r="0.9" fill="#ffffff"/>
+      <path d="M 82 104 Q 89 107 96 104" fill="none" stroke="#7AB8C2" stroke-width="0.8" opacity="0.7"/>
+      <path d="M 104 104 Q 111 107 118 104" fill="none" stroke="#7AB8C2" stroke-width="0.8" opacity="0.7"/>
+    </g>
+    <!-- 眼睛（闭眼）-->
+    <g class="eyes-closed" style="display:none">
+      <path d="M 82 100 Q 89 107 96 100" fill="none" stroke="#2a2a2a" stroke-width="1.6" stroke-linecap="round"/>
+      <path d="M 104 100 Q 111 107 118 100" fill="none" stroke="#2a2a2a" stroke-width="1.6" stroke-linecap="round"/>
+    </g>
+
+    <!-- 睫毛：简约风格（左右各一根） -->
+    <path d="M 83 93 L 81 91" stroke="#2a2a2a" stroke-width="1.2" stroke-linecap="round"/>
+    <path d="M 117 93 L 119 91" stroke="#2a2a2a" stroke-width="1.2" stroke-linecap="round"/>
+    <!-- 眉毛：位置略上提（更接近原图"高挑"感）-->
+    <path d="M 82 86.5 Q 86 84 92 86.5" fill="none" stroke="#1A8A85" stroke-width="1.6" stroke-linecap="round"/>
+    <path d="M 108 86.5 Q 114 84 118 86.5" fill="none" stroke="#1A8A85" stroke-width="1.6" stroke-linecap="round"/>
+
+    <!-- 腮红：缩小为适度红晕（原图小而精致）-->
+    <ellipse cx="80" cy="113" rx="3.8" ry="2.2" fill="#ffb3c1" opacity="0.65"/>
+    <ellipse cx="120" cy="113" rx="3.8" ry="2.2" fill="#ffb3c1" opacity="0.65"/>
+
+    <!-- 鼻子 -->
+    <ellipse cx="100" cy="111" rx="0.7" ry="0.5" fill="#f5b8a8" opacity="0.85"/>
+
+    <!-- 嘴巴（闭嘴微笑）：简单下弯弧线 -->
+    <g class="mouth-closed">
+      <path d="M 95 119 Q 100 122 105 119" fill="none" stroke="#a04050" stroke-width="1.3" stroke-linecap="round"/>
+    </g>
+    <!-- 嘴巴（唱歌张嘴笑）：简洁椭圆嘴 -->
+    <g class="mouth-sing" style="display:none">
+      <ellipse cx="100" cy="121" rx="3.4" ry="2.4" fill="#5a2030"/>
+      <ellipse cx="100" cy="120" rx="2.8" ry="1.1" fill="#ff8a9e"/>
+    </g>
+  </g>
+
+  <!-- ===== 手臂（黑长袖+青色袖口边）===== -->
+  <g class="arm arm-l">
+    <path d="M 70 126 Q 64 134 62 146 L 70 148 Q 74 138 78 130 Z"
+          fill="#1a1a1a"/>
+    <path d="M 62 146 Q 60 158 64 168 L 74 168 Q 76 156 70 148 Z"
+          fill="url(#miku-sleeve)"/>
+    <path d="M 60 166 L 76 168" stroke="#39C5BB" stroke-width="1.6"/>
+    <ellipse cx="68" cy="170" rx="4.5" ry="3.5" fill="url(#miku-skin)"/>
+  </g>
+  <g class="arm arm-r">
+    <path d="M 130 126 Q 136 134 138 146 L 130 148 Q 126 138 122 130 Z"
+          fill="#1a1a1a"/>
+    <path d="M 138 146 Q 140 158 136 168 L 126 168 Q 124 156 130 148 Z"
+          fill="url(#miku-sleeve)"/>
+    <path d="M 124 166 L 140 168" stroke="#39C5BB" stroke-width="1.6"/>
+    <ellipse cx="132" cy="170" rx="4.5" ry="3.5" fill="url(#miku-skin)"/>
+  </g>
+
+  <!-- ===== 腿/袜（黑色过膝袜+青色环边）===== -->
+  <g class="leg leg-l">
+    <path d="M 80 188 L 78 214 L 90 214 L 92 188 Z"
+          fill="#1a1a1a"/>
+    <line x1="79" y1="192" x2="92" y2="192" stroke="#39C5BB" stroke-width="1.6"/>
+    <ellipse cx="84" cy="216" rx="7" ry="3" fill="#1a1a1a"/>
+  </g>
+  <g class="leg leg-r">
+    <path d="M 108 188 L 110 214 L 122 214 L 120 188 Z"
+          fill="#1a1a1a"/>
+    <line x1="108" y1="192" x2="121" y2="192" stroke="#39C5BB" stroke-width="1.6"/>
+    <ellipse cx="116" cy="216" rx="7" ry="3" fill="#1a1a1a"/>
+  </g>
+
+  <!-- ===== 唱歌时的音符 ===== -->
+  <g class="music-notes" style="display:none">
+    <text x="150" y="38" font-size="18" fill="#39C5BB" opacity="0.9">♪</text>
+    <text x="170" y="60" font-size="14" fill="#39C5BB" opacity="0.75">♫</text>
+    <text x="36" y="48" font-size="16" fill="#39C5BB" opacity="0.85">♬</text>
+    <text x="22" y="78" font-size="13" fill="#39C5BB" opacity="0.7">♪</text>
+  </g>
+</svg>

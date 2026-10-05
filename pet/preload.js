@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('mp', {
     moveBy: (dx, dy) => ipcRenderer.invoke('pet:move_by', dx, dy),
     setPaused: (ms) => ipcRenderer.invoke('pet:set_paused', ms),
     openContextMenu: () => ipcRenderer.invoke('pet:context_menu'),
+    triggerAction: (action, ms) => ipcRenderer.invoke('pet:trigger_action', action, ms),
   },
   app: {
     quit: () => ipcRenderer.invoke('app:quit'),

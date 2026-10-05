@@ -10,6 +10,7 @@ const stages = {
   cat:  document.getElementById('stage-cat'),
   dog:  document.getElementById('stage-dog'),
   bird: document.getElementById('stage-bird'),
+  miku: document.getElementById('stage-miku'),
 };
 
 // Bubble auto-fade timer — when a new head arrives we reset the timer so the
@@ -24,7 +25,7 @@ let currentSpecies = 'cat';
 async function loadSvgs() {
   // Inline the three SVG files into their stage divs. We do this once at
   // startup so species switching is just a CSS visibility toggle.
-  const species = ['cat', 'dog', 'bird'];
+  const species = ['cat', 'dog', 'bird', 'miku'];
   await Promise.all(species.map(async (s) => {
     try {
       const r = await fetch(`pet/${s}.svg`);
@@ -55,6 +56,42 @@ function applyAction(action, direction) {
       const cc = s.querySelector('.eyes-closed');
       if (oc) oc.style.display = 'none';
       if (cc) cc.style.display = '';
+      // Miku 专属：唱歌时切换闭嘴/张嘴；挥手时不影响
+      const mClosed = s.querySelector('.mouth-closed');
+      const mSing = s.querySelector('.mouth-sing');
+      if (mClosed) mClosed.style.display = '';
+      if (mSing) mSing.style.display = 'none';
+      const notes = s.querySelector('.music-notes');
+      if (notes) notes.style.display = 'none';
+    }
+  } else if (action === 'sing') {
+    zzz.classList.add('hidden');
+    for (const s of Object.values(stages)) {
+      const oc = s.querySelector('.eyes-open');
+      const cc = s.querySelector('.eyes-closed');
+      if (oc) oc.style.display = '';
+      if (cc) cc.style.display = 'none';
+      // Miku 专属：闭嘴/张嘴交替
+      const mClosed = s.querySelector('.mouth-closed');
+      const mSing = s.querySelector('.mouth-sing');
+      if (mClosed) mClosed.style.display = 'none';
+      if (mSing) mSing.style.display = '';
+      const notes = s.querySelector('.music-notes');
+      if (notes) notes.style.display = '';
+    }
+  } else if (action === 'wave') {
+    zzz.classList.add('hidden');
+    for (const s of Object.values(stages)) {
+      const oc = s.querySelector('.eyes-open');
+      const cc = s.querySelector('.eyes-closed');
+      if (oc) oc.style.display = '';
+      if (cc) cc.style.display = 'none';
+      const mClosed = s.querySelector('.mouth-closed');
+      const mSing = s.querySelector('.mouth-sing');
+      if (mClosed) mClosed.style.display = '';
+      if (mSing) mSing.style.display = 'none';
+      const notes = s.querySelector('.music-notes');
+      if (notes) notes.style.display = 'none';
     }
   } else {
     zzz.classList.add('hidden');
@@ -63,6 +100,12 @@ function applyAction(action, direction) {
       const cc = s.querySelector('.eyes-closed');
       if (oc) oc.style.display = '';
       if (cc) cc.style.display = 'none';
+      const mClosed = s.querySelector('.mouth-closed');
+      const mSing = s.querySelector('.mouth-sing');
+      if (mClosed) mClosed.style.display = '';
+      if (mSing) mSing.style.display = 'none';
+      const notes = s.querySelector('.music-notes');
+      if (notes) notes.style.display = 'none';
     }
   }
 }
@@ -151,11 +194,23 @@ window.addEventListener('mouseup', async () => {
       clearReminderBubble();
       await M.pet.openReminder();
     } else {
+      // Miku 专属：单击触发挥手打招呼
+      if (currentSpecies === 'miku' && M.pet.triggerAction) {
+        try { await M.pet.triggerAction('wave', 1500); } catch {}
+      }
       await M.pet.showMain();
     }
   } catch (err) {
     console.error('pet click error', err);
     try { await M.pet.showMain(); } catch {}
+  }
+});
+
+// Miku 专属：双击触发唱歌动画
+window.addEventListener('dblclick', async (e) => {
+  e.preventDefault();
+  if (currentSpecies === 'miku' && M.pet.triggerAction) {
+    try { await M.pet.triggerAction('sing', 3000); } catch {}
   }
 });
 
