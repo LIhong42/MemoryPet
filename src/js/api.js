@@ -73,6 +73,11 @@ export const api = {
   app: {
     quit: () => M.app.quit(),
   },
+  backup: {
+    export: () => M.backup.export(),
+    import: () => M.backup.import(),
+    apply:  (zipPath) => M.backup.apply(zipPath),
+  },
   on: (channel, cb) => M.on(channel, cb),
 };
 

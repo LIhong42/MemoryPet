@@ -81,6 +81,14 @@ contextBridge.exposeInMainWorld('mp', {
   app: {
     quit: () => ipcRenderer.invoke('app:quit'),
   },
+  // Backup / restore. Two-step import (pick → apply) so the renderer can
+  // surface a confirm() dialog between picking the zip and overwriting the
+  // local DB.
+  backup: {
+    export: () => ipcRenderer.invoke('backup:export'),
+    import: () => ipcRenderer.invoke('backup:import'),
+    apply:  (zipPath) => ipcRenderer.invoke('backup:apply', zipPath),
+  },
 
   // Events from main → renderer
   on: (channel, cb) => {

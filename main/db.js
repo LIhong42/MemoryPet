@@ -222,6 +222,18 @@ function save() {
   dirty = false;
 }
 
+// Close the in-memory sql.js Database without touching the file on disk.
+// Used by the import-backup flow right before re-opening the same path with
+// the replacement bytes. Safe to call when no db is open.
+function close() {
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  if (db && typeof db.close === 'function') {
+    try { db.close(); } catch {}
+  }
+  db = null;
+  dirty = false;
+}
+
 function scheduleSave() {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
@@ -839,6 +851,24 @@ function migrateMemorialEventsV2() {
   if (!db) return;
   if (getSetting(MEMORIAL_EVENTS_V2_KEY) === '1') return;
 
+  // Idempotency probe: if the legacy `description` column is already gone,
+  // there's nothing to migrate. Mark the guard so we don't probe again on
+  // every boot (the probe reads from pragma_table_info which is OK but
+  // pointless once we know).
+  let hasLegacy = false;
+  try {
+    const cols = all('PRAGMA table_info(memorial_events)');
+    hasLegacy = cols.some((c) => c.name === 'description');
+  } catch (e) {
+    // Table doesn't exist yet — first-run case. v1 will have made it; we'll
+    // come back next boot if v1 hasn't run yet (race-free because v1 is
+    // synchronous and runs immediately before this).
+  }
+  if (!hasLegacy) {
+    setSetting(MEMORIAL_EVENTS_V2_KEY, '1');
+    return;
+  }
+
   try {
     db.run('PRAGMA foreign_keys = OFF');
     db.run('BEGIN');
@@ -1075,9 +1105,12 @@ function seedDefaultFestivals() {
 }
 
 module.exports = {
-  open, get, save, newId, nowStr, all, one, run,
+  open, close, get, save, newId, nowStr, all, one, run,
   upsertSearch, deleteSearch, getSetting, setSetting,
   markDirty,
+  // Read-only path getter — backup:export reads this to find the live DB
+  // file; backup:apply uses it as the swap destination.
+  get dbPath() { return dbPath; },
   parseContactRow, buildContactBody, safeParseArray,
   listAttributes, getAttribute,
   deleteContactCascade,

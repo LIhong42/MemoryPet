@@ -1,7 +1,8 @@
 // main/ipc.js — register all ipcMain handlers (sql.js-friendly)
-const { ipcMain, app, screen, Menu } = require('electron');
+const { ipcMain, app, screen, Menu, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const AdmZip = require('adm-zip');
 const db = require('./db');
 const { fmtDateTime, computeNextFireEvent } = require('./time_util');
 const { validateLunar } = require('./lunar');
@@ -906,6 +907,127 @@ function normFreeText(s) {
     ]);
     menu.popup({ window: winPet });
     return true;
+  });
+
+  // ---- Backup / restore ----
+  // Round-trippable bundle: a zip containing memorypet.db and a photos/
+  // folder that follows the on-disk layout <appData>/MemoryPet/photos.
+  // search_index is not bundled — it's a derived cache that's rebuilt from
+  // the imported tables by the next round of upsertSearch() calls.
+  //
+  // The flow is split into three handlers so the user gets a real OS
+  // confirm() dialog between picking the file and overwriting the local DB:
+  //
+  //   backup:export    – showSaveDialog → return chosen path (or canceled)
+  //   backup:import    – showOpenDialog → return chosen path (or canceled)
+  //   backup:apply     – destructive: swap DB on disk, replace photos dir,
+  //                       rebuild the in-memory reminder queue
+  //
+  // backup:export / backup:apply both snapshot the DB before doing IO so
+  // the in-memory state always lands in the file the user is going to ship.
+
+  function backupStamp() {
+    // "YYYYMMDD-HHmmss" in local time. Safe for filenames on Windows /
+    // macOS / Linux (no spaces, no colons).
+    return db.nowStr().replace(/[-: ]/g, '').slice(0, 15);
+  }
+
+  ipcMain.handle('backup:export', async () => {
+    if (!db.dbPath) throw new Error('数据库未初始化');
+    const stamp = backupStamp();
+    const result = await dialog.showSaveDialog(winMain, {
+      title: '导出备份',
+      defaultPath: `memorypet-backup-${stamp}.zip`,
+      filters: [{ name: 'MemoryPet 备份', extensions: ['zip'] }],
+    });
+    if (result.canceled || !result.filePath) return { canceled: true };
+
+    // Persist the latest in-memory state before copying the file out.
+    db.save();
+
+    const zip = new AdmZip();
+    zip.addLocalFile(db.dbPath, '', 'memorypet.db');
+    const photosDir = getPhotosDir();
+    if (fs.existsSync(photosDir)) {
+      // Empty directories inside `photos/` would otherwise be dropped by
+      // the zip writer; that's fine — empty dirs have no bytes anyway.
+      zip.addLocalFolder(photosDir, 'photos');
+    }
+    zip.writeZip(result.filePath);
+
+    db.setSetting('last_export_at', db.nowStr());
+    return { canceled: false, path: result.filePath };
+  });
+
+  ipcMain.handle('backup:import', async () => {
+    const pick = await dialog.showOpenDialog(winMain, {
+      title: '导入备份',
+      filters: [{ name: 'MemoryPet 备份', extensions: ['zip'] }],
+      properties: ['openFile'],
+    });
+    if (pick.canceled || !pick.filePaths || !pick.filePaths.length) {
+      return { canceled: true };
+    }
+    return { canceled: false, path: pick.filePaths[0] };
+  });
+
+  ipcMain.handle('backup:apply', async (_e, zipPath) => {
+    if (!zipPath) throw new Error('备份路径为空');
+    if (!fs.existsSync(zipPath)) throw new Error('备份文件不存在');
+
+    const zip = new AdmZip(zipPath);
+    const entries = zip.getEntries();
+    if (!entries.some((e) => e.entryName === 'memorypet.db')) {
+      throw new Error('备份中缺少 memorypet.db');
+    }
+
+    if (!db.dbPath) throw new Error('数据库未初始化');
+
+    // 1) Snapshot current in-memory state, then close so we can replace the
+    //    file on disk.
+    try { db.save(); } catch (e) { console.error('pre-import save failed:', e); }
+    db.close();
+
+    // 2) Atomically replace memorypet.db. We write to a sibling temp file
+    //    first so a crash mid-write can't leave the live DB half-written.
+    const dbEntry = entries.find((e) => e.entryName === 'memorypet.db');
+    const tmpDb = db.dbPath + '.import.tmp';
+    fs.writeFileSync(tmpDb, dbEntry.getData());
+    fs.copyFileSync(tmpDb, db.dbPath);
+    try { fs.unlinkSync(tmpDb); } catch {}
+
+    // 3) Reopen — sql.js reloads the bytes from disk.
+    await db.open(db.dbPath);
+
+    // 4) Wipe and rebuild the photos directory from the zip. Reject any
+    //    entry whose path tries to escape (zip slip) — entryName must not
+    //    contain ".." or absolute paths.
+    const photosDir = getPhotosDir();
+    fs.rmSync(photosDir, { recursive: true, force: true });
+    fs.mkdirSync(photosDir, { recursive: true });
+    for (const e of entries) {
+      if (e.isDirectory) continue;
+      if (!e.entryName.startsWith('photos/')) continue;
+      if (e.entryName.includes('..')) continue;
+      // Strip the "photos/" prefix; the resulting path must stay inside
+      // photosDir.
+      const rel = e.entryName.slice('photos/'.length);
+      const out = path.join(photosDir, rel);
+      const relOut = path.relative(photosDir, out);
+      if (relOut.startsWith('..') || path.isAbsolute(relOut)) continue;
+      fs.mkdirSync(path.dirname(out), { recursive: true });
+      fs.writeFileSync(out, e.getData());
+    }
+
+    // 5) Reset the live reminder queue so it doesn't keep stale ids from
+    //    the previous DB. The next scheduler tick will repopulate from
+    //    events.next_fire_at via scanAndFire().
+    if (queue && typeof queue.clear === 'function') {
+      queue.clear();
+    }
+
+    db.setSetting('last_import_at', db.nowStr());
+    return { canceled: false };
   });
 }
 

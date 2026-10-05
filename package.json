@@ -13,6 +13,7 @@
     "build:dir": "npm run prebuild && electron-builder --dir"
   },
   "dependencies": {
+    "adm-zip": "^0.6.1",
     "lunar-javascript": "^1.6.13",
     "sql.js": "^1.10.3"
   },
