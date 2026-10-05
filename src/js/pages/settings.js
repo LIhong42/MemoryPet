@@ -1,6 +1,12 @@
-// src/js/pages/settings.js — pet position, debug, version
+// src/js/pages/settings.js — pet position, species, walk toggle, debug, version
 import { api, escapeHtml, toast } from '../api.js';
 import { register, navigate } from '../router.js';
+
+const SPECIES_OPTIONS = [
+  { value: 'cat',  label: '🐱 小猫' },
+  { value: 'dog',  label: '🐶 小狗' },
+  { value: 'bird', label: '🐦 小鸟' },
+];
 
 async function render() {
   const app = document.getElementById('app');
@@ -8,6 +14,13 @@ async function render() {
   const state = await api.pet.getState();
   const lastExport = await api.settings.get('last_export_at');
   const lastImport = await api.settings.get('last_import_at');
+  const species = await api.pet.getSpecies();
+  const walkEnabled = await api.pet.getWalkEnabled();
+
+  const speciesOptions = SPECIES_OPTIONS.map((o) =>
+    `<option value="${o.value}" ${o.value === species ? 'selected' : ''}>${escapeHtml(o.label)}</option>`
+  ).join('');
+
   app.innerHTML = `
     <h1>设置</h1>
     <div class="card">
@@ -18,6 +31,25 @@ async function render() {
       </div>
       <button class="btn" id="save-pos">保存位置</button>
       <p class="meta" style="margin-top:8px">提示：直接用鼠标拖动桌宠即可调整位置，无需手动输入。</p>
+    </div>
+
+    <div class="card">
+      <h2>桌面宠物形象</h2>
+      <div class="form-row">
+        <div class="field">
+          <label>形象</label>
+          <select id="pet-species">${speciesOptions}</select>
+        </div>
+        <div class="field" style="justify-content:flex-end;">
+          <label style="display:flex; align-items:center; gap:6px;">
+            <input type="checkbox" id="pet-walk-enabled" ${walkEnabled ? 'checked' : ''}/>
+            自动行走
+          </label>
+        </div>
+      </div>
+      <p class="meta" style="margin-top:8px">
+        切换形象后立刻生效；自动行走开启时，宠物会在桌面上随机走路、跳跃、睡觉；关闭后宠物原地浮动。
+      </p>
     </div>
 
     <div class="card">
@@ -46,9 +78,9 @@ async function render() {
 
     <div class="card">
       <h2>关于</h2>
-      <p>MemoryPet v0.1.0 · 基于 Electron + sql.js (WASM SQLite)。</p>
+      <p>MemoryPet v0.2.0 · 基于 Electron + sql.js (WASM SQLite)。</p>
       <p>数据保存在本地 <code>%APPDATA%/MemoryPet/memorypet.db</code>。</p>
-      <p>点击宠物可打开主窗口或处理提醒；按住拖动可移动位置。</p>
+      <p>点击宠物可打开主窗口或处理提醒；按住拖动可移动位置；右键打开菜单。</p>
     </div>
   `;
   document.getElementById('save-pos').onclick = async () => {
@@ -56,6 +88,22 @@ async function render() {
     const y = parseInt(document.getElementById('pet-y').value, 10);
     await api.pet.setPosition(x, y);
     toast('已保存');
+  };
+  document.getElementById('pet-species').onchange = async (e) => {
+    try {
+      await api.pet.setSpecies(e.target.value);
+      toast('形象已切换');
+    } catch (err) {
+      toast('切换失败：' + ((err && err.message) || err));
+    }
+  };
+  document.getElementById('pet-walk-enabled').onchange = async (e) => {
+    try {
+      await api.pet.setWalkEnabled(!!e.target.checked);
+      toast(e.target.checked ? '自动行走已开启' : '自动行走已关闭');
+    } catch (err) {
+      toast('设置失败：' + ((err && err.message) || err));
+    }
   };
   document.getElementById('fire-now').onclick = async () => {
     await api.events.debugFireDueNow();

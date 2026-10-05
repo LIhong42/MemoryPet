@@ -65,6 +65,10 @@ export const api = {
     getPosition: () => M.pet.getPosition(),
     showMain: () => M.pet.showMain(),
     openReminder: () => M.pet.openReminder?.() || M.pet.showMain(),
+    getSpecies: () => M.pet.getSpecies(),
+    setSpecies: (s) => M.pet.setSpecies(s),
+    getWalkEnabled: () => M.pet.getWalkEnabled(),
+    setWalkEnabled: (b) => M.pet.setWalkEnabled(b),
   },
   settings: {
     get: (k) => M.settings.get(k),
@@ -119,6 +123,87 @@ export function fmtDateTime(s) {
   return `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}`;
 }
 
+// Compact "NN MM DD HH MM" or "YYYY-MM-DD HH:MM" → local Date. Used by
+// list rows to compute "还有 N 天" / "已过期 N 小时" relative strings
+// without coupling callers to backend time formats.
+function parseDbDate(s) {
+  if (!s) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/.exec(s);
+  if (!m) return null;
+  return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0));
+}
+
+// Relative-time chip text from a database timestamp. Returns one of:
+//   "今天 HH:MM"      — same day
+//   "明天 HH:MM"      — next day
+//   "昨天 HH:MM"      — previous day
+//   "周X HH:MM"       — within 6 days
+//   "MM-DD HH:MM"     — same year, beyond
+//   "YYYY-MM-DD"      — different year
+//   "未知"            — unparseable input
+// Treated as a string helper only — no UI logic, just a label.
+export function formatRelative(s, now = new Date()) {
+  const d = parseDbDate(s);
+  if (!d) return '未知';
+  const sameDay = (a, b) =>
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const target = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diffDays = Math.round((target - today) / 86400000);
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  if (diffDays === 0) return `今天 ${hm}`;
+  if (diffDays === 1) return `明天 ${hm}`;
+  if (diffDays === -1) return `昨天 ${hm}`;
+  if (diffDays > 1 && diffDays <= 6) {
+    const wd = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
+    return `周${wd} ${hm}`;
+  }
+  if (d.getFullYear() === now.getFullYear()) {
+    return `${d.getMonth() + 1}-${d.getDate()} ${hm}`;
+  }
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+}
+
+// "还有 N 天 / N 小时 / N 分钟" countdown from now → date. Returns null
+// when the date is in the past or unparseable. Used by the right-side
+// time chip on event rows so the user sees "紧迫度" at a glance.
+export function countdownTo(d_or_s, now = new Date()) {
+  const target = typeof d_or_s === 'string' ? parseDbDate(d_or_s) : d_or_s;
+  if (!target) return null;
+  const diffMs = target.getTime() - now.getTime();
+  if (diffMs <= 0) return null;
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 60) return `还有 ${minutes} 分钟`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `还有 ${hours} 小时`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `还有 ${days} 天`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `还有 ${months} 个月`;
+  const years = Math.floor(days / 365);
+  return `还有 ${years} 年`;
+}
+
+// Short Chinese weekday-and-time label, used in headers ("今日").
+export function dayLabel(d) {
+  const wd = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
+  return `周${wd}`;
+}
+
+// Emoji glyph for an event category. Stable across releases — the icon set
+// stays inside JS so we don't need to ship icon fonts. Falls back to a
+// dot glyph for unknown categories.
+export function categoryIcon(cat, tagKind) {
+  if (cat === 'memorial') return '🎞️';
+  if (cat === 'work')     return '💼';
+  if (tagKind === 'birthday')    return '🎂';
+  if (tagKind === 'anniversary') return '💝';
+  if (tagKind === 'festival')    return '🎉';
+  return '⏰';
+}
+
 export function escapeHtml(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -128,6 +213,44 @@ export function escapeHtml(s) {
 export function firstChar(s) {
   if (!s) return '?';
   return s.trim().charAt(0).toUpperCase();
+}
+
+// Deterministic 1..8 palette index from a contact's name. The result is
+// stable across renders (no Date.now / Math.random) so a contact always
+// shows the same color-strip + avatar tint. Empty / missing names fall back
+// to index 1 (the warm-orange default) which matches the legacy `.avatar`
+// background. The palette in styles.css is curated to stay distinct at 36px.
+export function contactColorIndex(s) {
+  const v = (s == null ? '' : String(s)).trim();
+  if (!v) return 1;
+  let h = 0;
+  for (let i = 0; i < v.length; i++) {
+    // djb2-ish: fast, good distribution, no need for crypto strength here.
+    h = ((h << 5) - h + v.charCodeAt(i)) | 0;
+  }
+  // Map to 1..8 inclusive (palette size). Using Math.abs to avoid negatives
+  // shifting the bucket, then mod 8 + 1.
+  return (Math.abs(h) % 8) + 1;
+}
+
+// Map an event row to its CSS `data-kind` value, picking the most specific
+// category available. Used by every page that renders event cards so the
+// color-strip styles in styles.css (`[data-kind=...]`) light up uniformly.
+//   1. memorial events outrank everything — they live on their own page
+//      and use a dedicated kind label.
+//   2. work events next — they're a sibling of memorial.
+//   3. tag_kind (birthday/anniversary/festival) when set, so the same
+//      selector works on /reminders, /today, and /search.
+//   4. everything else (ordinary reminders, one-off notes) → 'general',
+//      which falls back to --accent.
+export function eventKindAttr(e) {
+  if (!e) return 'general';
+  if (e.category === 'memorial') return 'memorial';
+  if (e.category === 'work')     return 'work';
+  if (e.tag_kind === 'birthday')    return 'birthday';
+  if (e.tag_kind === 'anniversary') return 'anniversary';
+  if (e.tag_kind === 'festival')    return 'festival';
+  return 'general';
 }
 
 // Single source of truth for "how do we show this contact's name"? Used by

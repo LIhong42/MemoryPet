@@ -3,7 +3,7 @@
 // Reads from `memorial_events` (independent of the reminder events table).
 // Each row carries its own kind ('first_time' / 'other'), occurrence time,
 // multi-contact list, and an optional thumbnail of the first uploaded photo.
-import { api, escapeHtml, displayName, fmtDateTime, toast, memorialPhotoUrl, fetchPhotoDataUrl } from '../api.js';
+import { api, escapeHtml, firstChar, displayName, fmtDateTime, formatRelative, categoryIcon, contactColorIndex, toast, memorialPhotoUrl, fetchPhotoDataUrl } from '../api.js';
 import { register, navigate } from '../router.js';
 import {
   bulkEnterLinkHtml, bulkToolbarHtml, bulkSelectableRowHtml,
@@ -39,7 +39,7 @@ async function render(args, params) {
     ${events.length === 0
       ? `<div class="empty">还没有回忆事件 · 点 + 新建 创建一个</div>`
       : events.map((e) => pageState.selectMode.active
-          ? bulkSelectableRowHtml(rowInner(e), e.id, pageState.selectMode.selected.has(e.id))
+          ? bulkSelectableRowHtml(rowInner(e), e.id, pageState.selectMode.selected.has(e.id), 'memorial')
           : renderRow(e)).join('')}
   `;
 
@@ -104,26 +104,48 @@ function thumbHtml(e) {
 
 function renderRow(e) {
   return `
-    <div class="card clickable" data-id="${escapeHtml(e.id)}">
-      <div class="row between">
-        <div>
-          <div><strong>${escapeHtml(e.title || '(无标题)')}</strong> <span class="tag">${escapeHtml(kindTagLabel(e.kind))}</span></div>
-          <div class="meta">发生：${escapeHtml(fmtDateTime(e.occurred_at))} · ${escapeHtml(contactSummary(e))}${e.photo_count > 0 ? ` · ${e.photo_count} 张照片` : ''}</div>
-        </div>
-        ${thumbHtml(e)}
-      </div>
+    <div class="card list-row clickable" data-kind="memorial" data-id="${escapeHtml(e.id)}">
+      ${memorialRowInner(e)}
     </div>
   `;
 }
 
 function rowInner(e) {
+  return memorialRowInner(e);
+}
+
+// Shared body: left = category icon + multi-contact avatar stack,
+// middle = title + meta line, right = photo thumbnail (when present) +
+// date. The thumbnail is small (44px) so the date can sit below it.
+function memorialRowInner(e) {
+  const names = (e.contact_names || []).filter(Boolean);
+  // The backend returns only names on the list endpoint — there's no per-name
+  // id on the row. Hash the visible name string so the avatar tint is
+  // stable and consistent with the contact-detail page for the same person.
+  const avatarStackHtml = names.length
+    ? `<span class="avatar-stack">${names.slice(0, 3).map((n) => {
+        const tone = contactColorIndex(n);
+        return `<span class="stack-av" style="background: var(--contact-${tone})" title="${escapeHtml(n)}">${escapeHtml(firstChar(n))}</span>`;
+      }).join('')}${names.length > 3 ? `<span class="stack-more">+${names.length - 3}</span>` : ''}</span>`
+    : '';
+  const contactText = names.length === 0 ? '独立事件' : names.length === 1 ? names[0] : `${names[0]} 等 ${names.length} 人`;
+  const metaParts = [contactText];
+  if (e.photo_count > 0) metaParts.push(`${e.photo_count} 张照片`);
   return `
-    <div class="row between">
-      <div>
-        <div><strong>${escapeHtml(e.title || '(无标题)')}</strong> <span class="tag">${escapeHtml(kindTagLabel(e.kind))}</span></div>
-        <div class="meta">发生：${escapeHtml(fmtDateTime(e.occurred_at))} · ${escapeHtml(contactSummary(e))}${e.photo_count > 0 ? ` · ${e.photo_count} 张照片` : ''}</div>
+    <div class="lr-id">
+      <span class="cat-icon" data-tone="memorial">${escapeHtml(categoryIcon('memorial', null))}</span>
+      ${avatarStackHtml}
+    </div>
+    <div class="lr-main">
+      <div class="lr-title">${escapeHtml(e.title || '(无标题)')} <span class="tag" style="margin-left:6px">${escapeHtml(kindTagLabel(e.kind))}</span></div>
+      <div class="lr-meta">${metaParts.map(escapeHtml).join(' · ')}</div>
+    </div>
+    <div class="lr-side">
+      <div class="time-chip"><span class="chip-dot"></span>${escapeHtml(formatRelative(e.occurred_at))}</div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        ${e.photo_count > 0 ? `<span class="time-chip muted">${e.photo_count} 张</span>` : ''}
+        ${thumbHtml(e)}
       </div>
-      ${thumbHtml(e)}
     </div>
   `;
 }

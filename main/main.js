@@ -6,6 +6,7 @@ const fs = require('fs');
 const db = require('./db');
 const scheduler = require('./scheduler');
 const ipc = require('./ipc');
+const { PetController } = require('./pet_controller');
 
 const isDev = process.argv.includes('--dev') || !app.isPackaged;
 
@@ -31,6 +32,7 @@ let winMain = null;
 let winPet = null;
 let petState = false; // false = NORMAL, true = REMINDER
 let activeReminder = null;
+let petController = null;
 
 function setPetState(v) {
   if (petState === v) return;
@@ -43,9 +45,18 @@ function getPetState() { return petState; }
 function setActiveReminder(r) { activeReminder = r; }
 
 function broadcastPetState() {
+  const head = queue.head();
   const payload = {
     state: petState ? 'REMINDER' : 'NORMAL',
     count: queue.len(),
+    // Carry enough of `head` that the pet window can render a meaningful
+    // speech bubble without an extra round-trip back to us. Fields are
+    // already on the head object (see scheduler.ReminderQueue → scanAndFire).
+    head: head ? {
+      title: head.title,
+      contact_name: head.contact_name || null,
+      description: head.description || null,
+    } : null,
   };
   if (winPet && !winPet.isDestroyed()) winPet.webContents.send('pet:state-changed', payload);
   if (winMain && !winMain.isDestroyed()) winMain.webContents.send('pet:state-changed', payload);
@@ -148,6 +159,11 @@ app.whenReady().then(async () => {
 
   createWindows();
 
+  // Start the autonomous-movement state machine. Created here (after the
+  // pet window exists) so it has a window reference to translate.
+  petController = new PetController({ winPet, db });
+  petController.start();
+
   ipc.register({
     queue,
     winMain,
@@ -155,6 +171,7 @@ app.whenReady().then(async () => {
     setPetState,
     getPetState,
     setActiveReminder,
+    petController,
   });
 
   scheduler.start({
@@ -183,5 +200,6 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   scheduler.stop();
+  if (petController) petController.stop();
   try { db.save(); } catch (e) { console.error('db save error:', e); }
 });

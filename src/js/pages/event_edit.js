@@ -270,14 +270,13 @@ async function renderEdit(args, params) {
     }
     try {
       if (isNew) {
-        const r = await api.events.create(input);
+        await api.events.create(input);
         toast('已创建');
-        navigate('/events/' + r.id);
       } else {
         await api.events.update(ev.id, input);
         toast('已保存');
-        navigate('/events/' + ev.id);
       }
+      navigate(listRoute);
     } catch (e) {
       toast((e && e.message) || '保存失败');
     }
@@ -666,7 +665,7 @@ async function renderMemorialEdit(args, params) {
     pendingObjectUrls = [];
 
     toast(isNew ? '已创建' : '已保存');
-    navigate('/events/memorial');
+    navigate(categoryListRoute('memorial'));
   };
 
   if (!isNew) {
@@ -680,7 +679,7 @@ async function renderMemorialEdit(args, params) {
       }
       for (const u of pendingObjectUrls) URL.revokeObjectURL(u);
       toast('已删除');
-      navigate('/events/memorial');
+      navigate(categoryListRoute('memorial'));
     };
   }
 }

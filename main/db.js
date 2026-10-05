@@ -189,7 +189,7 @@ async function open(dbPathArg) {
   const s = db.prepare('SELECT value FROM settings WHERE key = ?');
   s.bind(['pet_x']);
   if (!s.step()) {
-    db.run("INSERT INTO settings(key, value) VALUES ('pet_x', '200'), ('pet_y', '200'), ('pet_scale', '100')");
+    db.run("INSERT INTO settings(key, value) VALUES ('pet_x', '200'), ('pet_y', '200'), ('pet_scale', '100'), ('pet_species', 'cat'), ('pet_walk_enabled', '1')");
   }
   s.free();
 

@@ -80,9 +80,14 @@ export function bulkEnterLinkHtml() {
 //
 // The original row HTML is passed via `rowHtml` so each page can keep its
 // own row template — bulk mode is purely an additive wrapper.
-export function bulkSelectableRowHtml(rowHtml, id, defaultChecked) {
+//
+// `kind` is optional: when provided, the outer .card carries the same
+// data-kind so the category color-strip stays visible during select mode
+// (the inner row keeps its own data-kind for pages that pre-tag it).
+export function bulkSelectableRowHtml(rowHtml, id, defaultChecked, kind) {
+  const kindAttr = kind ? ` data-kind="${escapeAttr(kind)}"` : '';
   return `
-    <div class="card bulk-row" data-bulk-id="${escapeAttr(id)}">
+    <div class="card bulk-row"${kindAttr} data-bulk-id="${escapeAttr(id)}">
       <div class="row" style="gap:10px;">
         <input type="checkbox" class="bulk-row-check" data-bulk-id="${escapeAttr(id)}" ${defaultChecked ? 'checked' : ''}/>
         <div style="flex:1; min-width:0;">${rowHtml}</div>

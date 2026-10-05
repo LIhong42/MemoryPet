@@ -1,0 +1,32 @@
+<svg viewBox="0 0 100 100" width="160" height="160" xmlns="http://www.w3.org/2000/svg" aria-label="dog">
+  <!-- Body -->
+  <ellipse class="body" cx="50" cy="62" rx="26" ry="22" fill="#d8b277" stroke="#5a3a1c" stroke-width="1.5"/>
+  <!-- Head -->
+  <ellipse class="head" cx="50" cy="40" rx="20" ry="18" fill="#e6c089" stroke="#5a3a1c" stroke-width="1.5"/>
+  <!-- Ears (floppy) -->
+  <path class="ear ear-l" d="M 32 32 Q 28 44 30 52 L 38 50 Q 40 40 38 30 Z" fill="#b58a55" stroke="#5a3a1c" stroke-width="1.5"/>
+  <path class="ear ear-r" d="M 68 32 Q 72 44 70 52 L 62 50 Q 60 40 62 30 Z" fill="#b58a55" stroke="#5a3a1c" stroke-width="1.5"/>
+  <!-- Snout -->
+  <ellipse cx="50" cy="46" rx="8" ry="6" fill="#f0d4a4" stroke="#5a3a1c" stroke-width="1.2"/>
+  <!-- Nose -->
+  <ellipse cx="50" cy="42" rx="3" ry="2.4" fill="#222"/>
+  <!-- Eyes -->
+  <g class="eyes-open">
+    <circle class="eye eye-l" cx="42" cy="36" r="2.5" fill="#222"/>
+    <circle class="eye eye-r" cx="58" cy="36" r="2.5" fill="#222"/>
+    <circle cx="42.7" cy="35.4" r="0.8" fill="#fff"/>
+    <circle cx="58.7" cy="35.4" r="0.8" fill="#fff"/>
+  </g>
+  <g class="eyes-closed" style="display:none">
+    <path d="M 39 36 Q 42 38 45 36" fill="none" stroke="#222" stroke-width="1.3" stroke-linecap="round"/>
+    <path d="M 55 36 Q 58 38 61 36" fill="none" stroke="#222" stroke-width="1.3" stroke-linecap="round"/>
+  </g>
+  <!-- Mouth (tongue out) -->
+  <path d="M 46 50 Q 50 55 54 50" fill="none" stroke="#5a3a1c" stroke-width="1.2" stroke-linecap="round"/>
+  <ellipse class="tongue" cx="50" cy="53" rx="3" ry="2" fill="#ff8a8a"/>
+  <!-- Paws -->
+  <ellipse class="leg leg-l" cx="36" cy="84" rx="8" ry="5" fill="#d8b277" stroke="#5a3a1c" stroke-width="1.5"/>
+  <ellipse class="leg leg-r" cx="64" cy="84" rx="8" ry="5" fill="#d8b277" stroke="#5a3a1c" stroke-width="1.5"/>
+  <!-- Tail -->
+  <path class="tail" d="M 75 60 Q 92 50 88 30" fill="none" stroke="#5a3a1c" stroke-width="5" stroke-linecap="round"/>
+</svg>

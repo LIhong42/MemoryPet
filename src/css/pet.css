@@ -4,7 +4,7 @@ html, body {
   margin: 0; padding: 0;
   width: var(--size); height: var(--size);
   background: transparent;
-  overflow: hidden;
+  overflow: visible;
   -webkit-user-select: none;
   user-select: none;
 }
@@ -12,33 +12,92 @@ html, body {
 .pet-root {
   position: relative;
   width: var(--size); height: var(--size);
-  pointer-events: none; /* pass-through by default */
+  pointer-events: none;
 }
 
 .pet-sprite {
   width: var(--size); height: var(--size);
-  pointer-events: auto; /* sprite captures clicks */
+  pointer-events: auto;
   cursor: pointer;
   display: flex; align-items: center; justify-content: center;
-  animation: bob 3.2s ease-in-out infinite;
+  position: relative;
   transform-origin: center bottom;
+  /* Default: gentle idle bob. Action-specific animations are layered on top. */
+  animation: bob 3.2s ease-in-out infinite;
 }
-/* While dragging, freeze the bob/shake animation so the sprite tracks the
-   cursor 1:1 without the lag of a moving target. */
 .pet-sprite.dragging {
   animation: none !important;
   cursor: grabbing;
 }
 .pet-sprite svg { filter: drop-shadow(0 4px 8px rgba(0,0,0,0.18)); }
 
+/* REMINDER state: shake + red glow + softer bob (already shaken). */
 .pet-sprite[data-state="REMINDER"] {
   animation: shake 0.4s linear infinite;
 }
 .pet-sprite[data-state="REMINDER"] svg { filter: drop-shadow(0 0 12px #ff5252) drop-shadow(0 4px 8px rgba(0,0,0,0.2)); }
 
+/* Species stages: stack them and let CSS toggle visibility. */
+.svg-stage {
+  position: absolute;
+  inset: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.svg-stage.hidden { display: none; }
+
+/* ---- Action-driven animations ---- */
+/* While walking: small stepping bob with a directional lean. The walk
+   direction is communicated via data-action-direction on the sprite (left/right). */
+.pet-sprite[data-action="walking"] {
+  animation: walk-bob 0.55s ease-in-out infinite;
+}
+.pet-sprite[data-action="walking"][data-direction="left"] { transform: scaleX(-1); }
+.pet-sprite[data-action="walking"] .leg {
+  transform-origin: 50% 0;
+  animation: leg-swing 0.55s ease-in-out infinite;
+}
+.pet-sprite[data-action="walking"] .leg-r {
+  animation-delay: 0.28s;
+}
+.pet-sprite[data-action="walking"] .tail {
+  transform-origin: 50% 100%;
+  animation: tail-wag 0.45s ease-in-out infinite;
+}
+.pet-sprite[data-action="walking"] .wing {
+  transform-origin: 50% 50%;
+  animation: wing-flap 0.32s ease-in-out infinite;
+}
+
+/* While jumping: short parabola. The pet window is moved by the main
+   process; we add a slight squish on landing. */
+.pet-sprite[data-action="jumping"] {
+  animation: jump-stretch 0.7s ease-out infinite;
+}
+
+/* While sleeping: slower breathing bob; SVG eyes are swapped to closed
+   by pet.js. */
+.pet-sprite[data-action="sleeping"] {
+  animation: sleep-breathe 3s ease-in-out infinite;
+}
+
 @keyframes bob {
   0%, 100% { transform: translateY(0); }
   50%      { transform: translateY(-6px); }
+}
+@keyframes walk-bob {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-3px); }
+}
+@keyframes sleep-breathe {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50%      { transform: translateY(-2px) scale(1.02); }
+}
+@keyframes jump-stretch {
+  0%   { transform: translateY(0)    scaleY(0.95); }
+  20%  { transform: translateY(-2px) scaleY(1.08); }
+  50%  { transform: translateY(0)    scaleY(1.02); }
+  80%  { transform: translateY(-1px) scaleY(0.98); }
+  100% { transform: translateY(0)    scaleY(1); }
 }
 @keyframes shake {
   0%, 100% { transform: translateX(0) translateY(0); }
@@ -47,7 +106,58 @@ html, body {
   60% { transform: translateX(-2px) translateY(-1px); }
   80% { transform: translateX(2px) translateY(-2px); }
 }
+@keyframes leg-swing {
+  0%, 100% { transform: rotate(-12deg); }
+  50%      { transform: rotate(12deg); }
+}
+@keyframes tail-wag {
+  0%, 100% { transform: rotate(-10deg); }
+  50%      { transform: rotate(15deg); }
+}
+@keyframes wing-flap {
+  0%, 100% { transform: scaleY(1)    translateY(0); }
+  50%      { transform: scaleY(0.55) translateY(-2px); }
+}
 
+/* Bird-specific idle: subtle hover bob (faster than the default bob). */
+.pet-sprite[data-species="bird"] {
+  animation: bird-hover 1.6s ease-in-out infinite;
+}
+.pet-sprite[data-species="bird"][data-action="walking"] {
+  animation: bird-hover 0.9s ease-in-out infinite;
+}
+.pet-sprite[data-species="bird"][data-action="sleeping"] {
+  animation: bird-hover 4s ease-in-out infinite;
+}
+@keyframes bird-hover {
+  0%, 100% { transform: translateY(0)    rotate(-1deg); }
+  50%      { transform: translateY(-8px) rotate(1deg); }
+}
+
+/* ---- Sleep badge ("zzz") ---- */
+.zzz {
+  position: absolute;
+  top: 8px;
+  right: 6px;
+  font: 700 14px sans-serif;
+  color: #6b6b6b;
+  pointer-events: none;
+  animation: zzz-rise 2.4s ease-in-out infinite;
+}
+.zzz.hidden { display: none; }
+.zzz span {
+  display: inline-block;
+  font-size: 11px;
+  margin-left: 1px;
+  opacity: 0.7;
+}
+@keyframes zzz-rise {
+  0%   { opacity: 0;   transform: translate(0,    0)  scale(0.8); }
+  20%  { opacity: 1;   transform: translate(-2px, -4px) scale(1); }
+  100% { opacity: 0;   transform: translate(6px, -14px) scale(1.2); }
+}
+
+/* ---- Reminder count badge (top-right corner) ---- */
 .badge {
   position: absolute;
   top: 8px; right: 8px;
@@ -61,12 +171,14 @@ html, body {
   pointer-events: none;
   animation: pop 240ms ease-out;
 }
+.badge.hidden { display: none; }
 @keyframes pop {
   0%   { transform: scale(0); }
   60%  { transform: scale(1.2); }
   100% { transform: scale(1); }
 }
 
+/* ---- Reminder speech bubble (above sprite) ---- */
 .reminder-bubble {
   position: absolute;
   bottom: 100%;
@@ -81,7 +193,14 @@ html, body {
   box-shadow: 0 4px 12px rgba(0,0,0,0.15);
   margin-bottom: 8px;
   pointer-events: none;
+  opacity: 1;
+  transition: opacity 600ms ease;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
+.reminder-bubble.hidden { display: none; }
+.reminder-bubble.fade   { opacity: 0; }
 .reminder-bubble::after {
   content: '';
   position: absolute;

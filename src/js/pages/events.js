@@ -6,7 +6,7 @@
 //
 // Both filter values are reflected in the URL hash so the page can be
 // bookmarked / shared. Changing either triggers a re-fetch via events:list.
-import { api, escapeHtml, displayName, fmtDateTime, toast } from '../api.js';
+import { api, escapeHtml, firstChar, displayName, eventKindAttr, fmtDateTime, formatRelative, countdownTo, categoryIcon, contactColorIndex, toast } from '../api.js';
 import { register, navigate } from '../router.js';
 import {
   bulkEnterLinkHtml, bulkToolbarHtml, bulkSelectableRowHtml,
@@ -96,13 +96,13 @@ async function render(args, params) {
     ${filteredEvents.length === 0
       ? `<div class="empty">没有匹配的提醒日期</div>`
       : filteredEvents.map((e) => pageState.selectMode.active
-          ? bulkSelectableRowHtml(rowInner(e, cById, festByCode), e.id, pageState.selectMode.selected.has(e.id))
+          ? bulkSelectableRowHtml(rowInner(e, cById, festByCode), e.id, pageState.selectMode.selected.has(e.id), eventKindAttr(e))
           : renderRow(e, cById, festByCode)).join('')}
   `;
 
   if (!pageState.selectMode.active) {
     document.querySelectorAll('.card.clickable').forEach((el) => {
-      el.onclick = () => navigate('/events/' + el.dataset.id);
+      el.onclick = () => navigate('/events/' + el.dataset.id + '?category=general');
     });
   }
   document.getElementById('new-event').onclick = () => navigate('/events/new?category=general');
@@ -178,15 +178,7 @@ function rowInner(e, cById, festByCode) {
   if (e.tag_kind === 'festival' && festByCode && festByCode[e.title]) {
     displayTitle = festByCode[e.title];
   }
-  return `
-    <div class="row between">
-      <div>
-        <div><strong>${escapeHtml(displayTitle)}</strong>${e.tag_kind ? ` <span class="tag">${tagKindLabel(e.tag_kind)}</span>` : ''}</div>
-        <div class="meta">${fmtDateTime(e.next_fire_at || e.remind_date)} · ${kindLabel(e.remind_kind)}${e.lunar_month && e.lunar_day ? ' · 农历 ' + e.lunar_month + '月' + e.lunar_day + '日' : ''}${e.contact_id && cById[e.contact_id] ? ' · ' + escapeHtml(displayName(cById[e.contact_id])) : ''}${e.active ? '' : ' · 已结束'}</div>
-      </div>
-      <div>${e.remind ? '<span class="tag">提醒</span>' : ''}</div>
-    </div>
-  `;
+  return renderRowInner(e, displayTitle, cById);
 }
 
 function renderRow(e, cById, festByCode) {
@@ -196,19 +188,47 @@ function renderRow(e, cById, festByCode) {
   if (e.tag_kind === 'festival' && festByCode && festByCode[e.title]) {
     displayTitle = festByCode[e.title];
   }
+  const kind = eventKindAttr(e);
   return `
-        <div class="card clickable" data-id="${escapeHtml(e.id)}">
-          <div class="row between">
-            <div>
-              <div><strong>${escapeHtml(displayTitle)}</strong>${e.tag_kind ? ` <span class="tag">${tagKindLabel(e.tag_kind)}</span>` : ''}</div>
-              <div class="meta">${fmtDateTime(e.next_fire_at || e.remind_date)} · ${kindLabel(e.remind_kind)}${e.lunar_month && e.lunar_day ? ' · 农历 ' + e.lunar_month + '月' + e.lunar_day + '日' : ''}${e.contact_id && cById[e.contact_id] ? ' · ' + escapeHtml(displayName(cById[e.contact_id])) : ''}${e.active ? '' : ' · 已结束'}</div>
-            </div>
-            <div>
-              ${e.remind ? '<span class="tag">提醒</span>' : ''}
-            </div>
-          </div>
+        <div class="card list-row clickable" data-kind="${escapeHtml(kind)}" data-id="${escapeHtml(e.id)}">
+          ${renderRowInner(e, displayTitle, cById)}
         </div>
       `;
+}
+
+// Shared row body used by both idle renderRow (wrapped in a .card) and
+// bulk-select rowInner (wrapped in .bulk-row). Returns the inner three-column
+// grid plus the right-side time chip.
+function renderRowInner(e, displayTitle, cById) {
+  const kind = eventKindAttr(e);
+  const contact = e.contact_id && cById && cById[e.contact_id] ? cById[e.contact_id] : null;
+  const contactName = contact ? displayName(contact) : '';
+  const contactTone = contact ? contactColorIndex(contact.name) : 0;
+  const metaParts = [];
+  if (e.lunar_month && e.lunar_day) metaParts.push(`农历 ${e.lunar_month}-${e.lunar_day}`);
+  metaParts.push(kindLabel(e.remind_kind));
+  if (contact) metaParts.push(escapeHtml(contactName));
+  if (!e.active) metaParts.push('已结束');
+  const meta = metaParts.join(' · ');
+  // Time chip on the right: relative date + countdown.
+  const target = e.next_fire_at || e.remind_date;
+  const rel = formatRelative(target);
+  const cd  = countdownTo(target);
+  const tagLabel = e.tag_kind ? tagKindLabel(e.tag_kind) : null;
+  return `
+    <div class="lr-id">
+      <span class="cat-icon" data-tone="${escapeHtml(kind)}">${escapeHtml(categoryIcon(e.category, e.tag_kind))}</span>
+      ${contact ? `<span class="stack-av" style="background: var(--contact-${contactTone})" title="${escapeHtml(contactName)}">${escapeHtml(firstChar(contact.name))}</span>` : ''}
+    </div>
+    <div class="lr-main">
+      <div class="lr-title">${escapeHtml(displayTitle || '(无标题)')}${tagLabel ? ` <span class="tag" style="margin-left:6px">${escapeHtml(tagLabel)}</span>` : ''}</div>
+      <div class="lr-meta">${meta}</div>
+    </div>
+    <div class="lr-side">
+      <div class="time-chip ${cd ? 'urgent' : ''}"><span class="chip-dot"></span>${escapeHtml(rel)}</div>
+      ${cd ? `<div class="time-chip muted">${escapeHtml(cd)}</div>` : ''}
+    </div>
+  `;
 }
 
 // Map a tag_kind code to its short label.

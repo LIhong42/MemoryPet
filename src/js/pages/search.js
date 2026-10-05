@@ -1,5 +1,5 @@
 // src/js/pages/search.js
-import { api, escapeHtml, firstChar, displayName, fmtDateTime } from '../api.js';
+import { api, escapeHtml, firstChar, displayName, eventKindAttr, fmtDateTime, formatRelative, categoryIcon, contactColorIndex } from '../api.js';
 import { register, navigate } from '../router.js';
 
 async function render(_args, params) {
@@ -35,39 +35,62 @@ async function runSearch(q) {
       : ''}
     ${r.contacts.length > 0 ? `
       <div class="section-header"><h2>联系人 (${r.contacts.length})</h2></div>
-      ${r.contacts.map((c) => `
-        <div class="list-item" data-id="${escapeHtml(c.id)}" data-action="contact">
-          <div class="row">
-            <div class="avatar">${escapeHtml(firstChar(c.name))}</div>
-            <div>
-              <div><strong>${escapeHtml(displayName(c))}</strong></div>
-              <div class="meta">${escapeHtml(c.relationship || '')}</div>
-            </div>
+      ${r.contacts.map((c) => {
+        const tone = contactColorIndex(c.name);
+        return `
+        <div class="card list-row clickable" data-contact-color="${tone}" data-id="${escapeHtml(c.id)}" data-action="contact">
+          <div class="lr-id">
+            <div class="avatar-lg" style="background: var(--contact-${tone})">${escapeHtml(firstChar(c.name))}</div>
           </div>
+          <div class="lr-main">
+            <div class="lr-title">${escapeHtml(displayName(c))}</div>
+            <div class="lr-meta">${escapeHtml(c.relationship || '联系人')}</div>
+          </div>
+          <div class="lr-side"><div class="time-chip muted">查看 →</div></div>
         </div>
-      `).join('')}` : ''}
+      `}).join('')}` : ''}
     ${r.events.length > 0 ? `
       <div class="section-header"><h2>事件 (${r.events.length})</h2></div>
-      ${r.events.map((e) => `
-        <div class="card clickable" data-id="${escapeHtml(e.id)}" data-action="event">
-          <div><strong>${escapeHtml(e.title)}</strong> <span class="tag">${escapeHtml(categoryTagLabel(e.category))}</span>${e.tag_kind ? ` <span class="tag">${tagKindLabel(e.tag_kind)}</span>` : ''}</div>
-          <div class="meta">${fmtDateTime(e.next_fire_at || e.remind_date)} · ${kindLabel(e.remind_kind)}${e.lunar_month && e.lunar_day ? ' · 农历 ' + e.lunar_month + '月' + e.lunar_day + '日' : ''}</div>
+      ${r.events.map((e) => {
+        const kind = eventKindAttr(e);
+        return `
+        <div class="card list-row clickable" data-kind="${escapeHtml(kind)}" data-id="${escapeHtml(e.id)}" data-category="${escapeHtml(e.category || 'general')}" data-action="event">
+          <div class="lr-id">
+            <span class="cat-icon" data-tone="${escapeHtml(kind)}">${escapeHtml(categoryIcon(e.category, e.tag_kind))}</span>
+          </div>
+          <div class="lr-main">
+            <div class="lr-title">${escapeHtml(e.title)} <span class="tag" style="margin-left:6px">${escapeHtml(categoryTagLabel(e.category))}</span>${e.tag_kind ? ` <span class="tag">${escapeHtml(tagKindLabel(e.tag_kind))}</span>` : ''}</div>
+            <div class="lr-meta">${escapeHtml(kindLabel(e.remind_kind))}${e.lunar_month && e.lunar_day ? ' · 农历 ' + e.lunar_month + '-' + e.lunar_day : ''}</div>
+          </div>
+          <div class="lr-side"><div class="time-chip"><span class="chip-dot"></span>${escapeHtml(formatRelative(e.next_fire_at || e.remind_date))}</div></div>
         </div>
-      `).join('')}` : ''}
+      `}).join('')}` : ''}
     ${memorial.length > 0 ? `
       <div class="section-header"><h2>回忆事件 (${memorial.length})</h2></div>
       ${memorial.map((e) => `
-        <div class="card clickable" data-id="${escapeHtml(e.id)}" data-action="memorial">
-          <div><strong>${escapeHtml(e.title || '(无标题)')}</strong> <span class="tag">${escapeHtml(e.kind === 'first_time' ? '第一次' : '其他')}</span></div>
-          <div class="meta">发生：${escapeHtml(fmtDateTime(e.occurred_at))}</div>
+        <div class="card list-row clickable" data-kind="memorial" data-id="${escapeHtml(e.id)}" data-action="memorial">
+          <div class="lr-id">
+            <span class="cat-icon" data-tone="memorial">${escapeHtml(categoryIcon('memorial', null))}</span>
+          </div>
+          <div class="lr-main">
+            <div class="lr-title">${escapeHtml(e.title || '(无标题)')} <span class="tag" style="margin-left:6px">${escapeHtml(e.kind === 'first_time' ? '第一次' : '其他')}</span></div>
+            <div class="lr-meta">回忆事件</div>
+          </div>
+          <div class="lr-side"><div class="time-chip"><span class="chip-dot"></span>${escapeHtml(formatRelative(e.occurred_at))}</div></div>
         </div>
       `).join('')}` : ''}
     ${r.important_dates.length > 0 ? `
       <div class="section-header"><h2>重要日期 (${r.important_dates.length})</h2></div>
       ${r.important_dates.map((d) => `
-        <div class="card" data-id="${escapeHtml(d.contact_id)}" data-action="contact">
-          <div><strong>${escapeHtml(d.label)}</strong></div>
-          <div class="meta">每年 ${d.month}/${d.day}${d.year ? '（' + d.year + '年生）' : ''}</div>
+        <div class="card list-row" data-kind="important" data-id="${escapeHtml(d.contact_id)}" data-action="contact">
+          <div class="lr-id">
+            <span class="cat-icon" data-tone="important">🎂</span>
+          </div>
+          <div class="lr-main">
+            <div class="lr-title">${escapeHtml(d.label)}</div>
+            <div class="lr-meta">${d.month}/${d.day}${d.year ? ' · ' + d.year + '年生' : ''} · 每年提醒</div>
+          </div>
+          <div class="lr-side"><div class="time-chip muted">查看 →</div></div>
         </div>
       `).join('')}` : ''}
   `;
@@ -75,7 +98,7 @@ async function runSearch(q) {
     el.onclick = () => navigate('/contacts/' + el.dataset.id);
   });
   out.querySelectorAll('[data-action="event"]').forEach((el) => {
-    el.onclick = () => navigate('/events/' + el.dataset.id);
+    el.onclick = () => navigate('/events/' + el.dataset.id + '?category=' + (el.dataset.category || 'general'));
   });
   out.querySelectorAll('[data-action="memorial"]').forEach((el) => {
     el.onclick = () => navigate('/events/' + el.dataset.id + '?category=memorial');

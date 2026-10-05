@@ -1,5 +1,5 @@
 // src/js/pages/contact_detail.js — view a single contact + their dates + events
-import { api, escapeHtml, displayName, fmtDate, fmtDateTime, toast } from '../api.js';
+import { api, escapeHtml, firstChar, displayName, eventKindAttr, contactColorIndex, fmtDate, fmtDateTime, formatRelative, countdownTo, categoryIcon, toast } from '../api.js';
 import { register, navigate } from '../router.js';
 import {
   bulkEnterLinkHtml, bulkToolbarHtml,
@@ -177,7 +177,7 @@ function renderListSection(title, items, state, kind, c) {
     return inner;
   }).join('');
   const listHtml = visible.length
-    ? `<div class="card">${rowsHtml}</div>`
+    ? `<div class="card" data-kind="${escapeHtml(kind)}">${rowsHtml}</div>`
     : (filtersActive
         ? `<div class="empty">没有匹配的${title}</div>`
         : `<div class="empty">还没有${title}</div>`);
@@ -439,7 +439,7 @@ async function render(args) {
         <a class="inline-link" style="margin-left:10px" href="#/contacts">← 返回</a>
       </div>
     </div>
-    <div class="card">
+    <div class="card" data-contact-color="${contactColorIndex(c.name)}">
       <div class="row" style="gap:24px">
         ${c.relationship ? `<div><div class="meta">关系</div>${escapeHtml(c.relationship)}</div>` : ''}
         <div><div class="meta">条目统计</div>${likes.length} 喜好 / ${taboos.length} 忌讳 / ${gifts.length} 礼物</div>
@@ -456,17 +456,28 @@ async function render(args) {
     </div>
     ${dates.length === 0
       ? `<div class="empty">还没有重要日期</div>`
-      : dates.map((d) => `
-        <div class="card">
-          <div class="row between">
-            <div>
-              <div><strong>${escapeHtml(d.label)}</strong> · <span class="tag">${kindLabel(d.kind)}</span></div>
-              <div class="meta">每年 ${d.month}/${d.day}${d.year ? '（' + d.year + '年生）' : ''} · 提醒 ${escapeHtml(d.remind_time || '09:00')}</div>
-            </div>
+      : dates.map((d) => {
+        const kindTone = d.kind === 'birthday' ? 'birthday'
+                       : d.kind === 'anniversary' ? 'anniversary'
+                       : 'important';
+        const icon = d.kind === 'birthday' ? '🎂'
+                   : d.kind === 'anniversary' ? '💝'
+                   : '📅';
+        return `
+        <div class="card list-row" data-kind="important">
+          <div class="lr-id">
+            <span class="cat-icon" data-tone="${kindTone}">${icon}</span>
+          </div>
+          <div class="lr-main">
+            <div class="lr-title">${escapeHtml(d.label)} <span class="tag" style="margin-left:6px">${escapeHtml(kindLabel(d.kind))}</span></div>
+            <div class="lr-meta">每年 ${d.month}/${d.day}${d.year ? ' · ' + d.year + '年生' : ''} · 提醒 ${escapeHtml(d.remind_time || '09:00')}</div>
+          </div>
+          <div class="lr-side">
+            <div class="time-chip"><span class="chip-dot"></span>每年 ${d.month}-${d.day}</div>
             <button class="icon-btn" data-del-date="${escapeHtml(d.id)}" title="删除">✕</button>
           </div>
         </div>
-      `).join('')}
+      `}).join('')}
 
     <div class="section-header">
       <h2>回忆事件</h2>
@@ -475,12 +486,16 @@ async function render(args) {
     ${memorial.length === 0
       ? `<div class="empty">还没有回忆事件</div>`
       : memorial.map((e) => `
-        <div class="card clickable" data-memorial="${escapeHtml(e.id)}">
-          <div class="row between">
-            <div>
-              <div><strong>${escapeHtml(e.title || '(无标题)')}</strong> <span class="tag">${escapeHtml(e.kind === 'first_time' ? '第一次' : '其他')}</span></div>
-              <div class="meta">发生：${escapeHtml(fmtDateTime(e.occurred_at))}${e.photo_count > 0 ? ` · ${e.photo_count} 张照片` : ''}</div>
-            </div>
+        <div class="card list-row clickable" data-kind="memorial" data-memorial="${escapeHtml(e.id)}">
+          <div class="lr-id">
+            <span class="cat-icon" data-tone="memorial">${escapeHtml(categoryIcon('memorial', null))}</span>
+          </div>
+          <div class="lr-main">
+            <div class="lr-title">${escapeHtml(e.title || '(无标题)')} <span class="tag" style="margin-left:6px">${escapeHtml(e.kind === 'first_time' ? '第一次' : '其他')}</span></div>
+            <div class="lr-meta">${e.photo_count > 0 ? `${e.photo_count} 张照片` : '回忆事件'}</div>
+          </div>
+          <div class="lr-side">
+            <div class="time-chip"><span class="chip-dot"></span>${escapeHtml(formatRelative(e.occurred_at))}</div>
           </div>
         </div>
       `).join('')}
@@ -491,22 +506,31 @@ async function render(args) {
     </div>
     ${events.length === 0
       ? `<div class="empty">还没有事件</div>`
-      : events.map((e) => `
-        <div class="card clickable" data-id="${escapeHtml(e.id)}">
-          <div class="row between">
-            <div>
-              <div><strong>${escapeHtml(e.title)}</strong></div>
-              <div class="meta">${fmtDateTime(e.next_fire_at || e.remind_date)} · ${kindLabel(e.remind_kind)}${e.active ? '' : ' · 已结束'}</div>
-            </div>
+      : events.map((e) => {
+        const kind = eventKindAttr(e);
+        const rel = formatRelative(e.next_fire_at || e.remind_date);
+        const cd  = countdownTo(e.next_fire_at || e.remind_date);
+        return `
+        <div class="card list-row clickable" data-kind="${escapeHtml(kind)}" data-id="${escapeHtml(e.id)}" data-category="${escapeHtml(e.category || 'general')}">
+          <div class="lr-id">
+            <span class="cat-icon" data-tone="${escapeHtml(kind)}">${escapeHtml(categoryIcon(e.category, e.tag_kind))}</span>
+          </div>
+          <div class="lr-main">
+            <div class="lr-title">${escapeHtml(e.title)}</div>
+            <div class="lr-meta">${escapeHtml(kindLabel(e.remind_kind))}${e.active ? '' : ' · 已结束'}</div>
+          </div>
+          <div class="lr-side">
+            <div class="time-chip ${cd ? 'urgent' : ''}"><span class="chip-dot"></span>${escapeHtml(rel)}</div>
+            ${cd ? `<div class="time-chip muted">${escapeHtml(cd)}</div>` : ''}
           </div>
         </div>
-      `).join('')}
+      `}).join('')}
   `;
 
   rerenderSections();
 
   document.getElementById('add-date').onclick = () => showDateDialog(args.id);
-  document.getElementById('add-event').onclick = () => navigate('/events/new?contact_id=' + args.id);
+  document.getElementById('add-event').onclick = () => navigate('/events/new?category=general&contact_id=' + args.id);
   const addMemorial = document.getElementById('add-memorial');
   if (addMemorial) addMemorial.onclick = () => navigate('/events/new?category=memorial&contact_id=' + args.id);
   app.querySelectorAll('[data-del-date]').forEach((el) => {
@@ -522,7 +546,7 @@ async function render(args) {
       if (el.dataset.memorial) {
         navigate('/events/' + el.dataset.memorial + '?category=memorial');
       } else if (el.dataset.id) {
-        navigate('/events/' + el.dataset.id);
+        navigate('/events/' + el.dataset.id + '?category=' + (el.dataset.category || 'general'));
       }
     };
   });

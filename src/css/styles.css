@@ -9,15 +9,38 @@
   --accent: #d97757;
   --accent-soft: #fbeee5;
   --danger: #d23f3f;
-  --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04);
+  /* Shadow tiers: SM for resting state, MD for hover/raised state. The
+     legacy --shadow alias keeps older rules that haven't migrated working. */
+  --shadow-sm: 0 1px 2px rgba(40, 30, 20, 0.04), 0 1px 4px rgba(40, 30, 20, 0.04);
+  --shadow-md: 0 4px 8px rgba(40, 30, 20, 0.06), 0 8px 24px rgba(40, 30, 20, 0.06);
+  --shadow: var(--shadow-sm);
   --radius: 10px;
+  /* Single source for the font stack so we can tweak it without hunting
+     through every selector that hard-codes it. */
+  --font-stack: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  /* Category color-strip palette. The 4px left border on a card picks up the
+     value matching its data-kind attribute, giving every category a
+     at-a-glance visual anchor. Values intentionally chosen to be distinct
+     from --accent itself so the existing "reminder active" orange stays
+     reserved for that semantic. */
+  --cat-birthday:    #e8b478;  /* 生日 / 重要日期 - 暖琥珀 */
+  --cat-anniversary: #d8a8b0;  /* 纪念日 - 玫瑰 */
+  --cat-festival:    #b8a8d8;  /* 节日 - 薰衣草 */
+  --cat-general:     var(--accent);
+  --cat-memorial:    #f4a8a0;  /* 回忆事件 - 粉珊瑚 */
+  --cat-work:        #8aa8d8;  /* 工作事件 - 雾蓝 */
+  --cat-like:        #5fa96f;  /* 喜好 - 橄榄绿 */
+  --cat-taboo:       #a89998;  /* 忌讳 - 暖灰 */
+  --cat-gift:        #d8a878;  /* 礼物 - 金棕 */
 }
 html, body {
   margin: 0; padding: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-family: var(--font-stack);
   background: var(--bg);
   color: var(--text);
   font-size: 14px;
+  letter-spacing: 0.01em;
   height: 100vh;
   overflow: hidden;
 }
@@ -65,9 +88,16 @@ html, body {
 
 .content { padding: 18px 22px; overflow-y: auto; height: calc(100vh - 53px); }
 
-h1 { font-size: 20px; margin: 0 0 12px; }
-h2 { font-size: 16px; margin: 0 0 10px; color: var(--muted); font-weight: 600; }
-h3 { font-size: 14px; margin: 0; }
+h1 { font-size: 22px; font-weight: 600; margin: 0 0 14px; letter-spacing: 0.01em; }
+h2 {
+  font-size: 15px;
+  margin: 0 0 10px;
+  color: var(--text);
+  opacity: 0.62;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+h3 { font-size: 14px; margin: 0; font-weight: 600; }
 
 .page-actions { display: flex; gap: 8px; margin-bottom: 12px; }
 
@@ -80,13 +110,16 @@ h3 { font-size: 14px; margin: 0; }
   cursor: pointer;
   font-size: 13px;
   font-weight: 500;
+  transition: background 120ms ease, transform 120ms ease, box-shadow 180ms ease;
 }
 .btn:hover { background: #c5684a; }
+.btn:active { transform: translateY(1px); }
 .btn.secondary {
   background: transparent; color: var(--text);
   border: 1px solid var(--border);
 }
 .btn.secondary:hover { background: var(--accent-soft); }
+.btn.secondary:active { transform: translateY(1px); }
 .btn.danger { background: var(--danger); }
 .btn.danger:hover { background: #b53434; }
 .btn:disabled { background: var(--muted); cursor: not-allowed; }
@@ -97,14 +130,15 @@ h3 { font-size: 14px; margin: 0; }
   border-radius: var(--radius);
   padding: 14px 16px;
   margin-bottom: 10px;
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 200ms ease, transform 200ms ease;
 }
-.card.clickable { cursor: pointer; transition: transform 100ms, box-shadow 100ms; }
-.card.clickable:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
+.card.clickable { cursor: pointer; transition: transform 200ms ease, box-shadow 200ms ease; }
+.card.clickable:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
 
 .row { display: flex; align-items: center; gap: 10px; }
 .row.between { justify-content: space-between; }
-.row .meta { color: var(--muted); font-size: 12px; }
+.row .meta { color: var(--muted); font-size: 12px; letter-spacing: 0.01em; }
 
 .empty {
   text-align: center;
@@ -138,9 +172,13 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
   padding: 12px 14px; background: var(--panel);
   border: 1px solid var(--border); border-radius: var(--radius);
   margin-bottom: 8px; cursor: pointer;
-  transition: background 100ms;
+  transition: background 200ms ease, box-shadow 200ms ease, transform 200ms ease;
 }
-.list-item:hover { background: var(--accent-soft); }
+.list-item:hover {
+  background: var(--accent-soft);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
 .list-item .avatar {
   width: 36px; height: 36px;
     background: var(--accent);
@@ -152,6 +190,49 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
     flex-shrink: 0;
   }
 .list-item .meta { color: var(--muted); font-size: 12px; }
+
+/* Per-contact color-strip on the contacts list. Each contact gets a
+   deterministic color derived from its name hash (helper in api.js).
+   The avatar background picks up the same hue so the row reads as one
+   branded unit. We use a palette of 8 muted-but-distinct hues that
+   stay readable on white at small sizes. */
+:root {
+  --contact-1: #d97757; /* 暖橙（默认主色）*/
+  --contact-2: #5fa96f; /* 橄榄绿 */
+  --contact-3: #8aa8d8; /* 雾蓝 */
+  --contact-4: #d8a8b0; /* 玫瑰 */
+  --contact-5: #e8b478; /* 琥珀 */
+  --contact-6: #b48a5a; /* 木纹棕 */
+  --contact-7: #6e8b6f; /* 鼠尾草 */
+  --contact-8: #a884c4; /* 紫丁香 */
+}
+.list-item[data-contact-color="1"] { border-left: 4px solid var(--contact-1); }
+.list-item[data-contact-color="1"] .avatar { background: var(--contact-1); }
+.list-item[data-contact-color="2"] { border-left: 4px solid var(--contact-2); }
+.list-item[data-contact-color="2"] .avatar { background: var(--contact-2); }
+.list-item[data-contact-color="3"] { border-left: 4px solid var(--contact-3); }
+.list-item[data-contact-color="3"] .avatar { background: var(--contact-3); }
+.list-item[data-contact-color="4"] { border-left: 4px solid var(--contact-4); }
+.list-item[data-contact-color="4"] .avatar { background: var(--contact-4); }
+.list-item[data-contact-color="5"] { border-left: 4px solid var(--contact-5); }
+.list-item[data-contact-color="5"] .avatar { background: var(--contact-5); }
+.list-item[data-contact-color="6"] { border-left: 4px solid var(--contact-6); }
+.list-item[data-contact-color="6"] .avatar { background: var(--contact-6); }
+.list-item[data-contact-color="7"] { border-left: 4px solid var(--contact-7); }
+.list-item[data-contact-color="7"] .avatar { background: var(--contact-7); }
+.list-item[data-contact-color="8"] { border-left: 4px solid var(--contact-8); }
+.list-item[data-contact-color="8"] .avatar { background: var(--contact-8); }
+
+/* Same color-strip palette applied to the contact-detail header so the
+   * summary card visually anchors to the same person across navigation. */
+.card[data-contact-color="1"] { border-left: 4px solid var(--contact-1); padding-left: 12px; }
+.card[data-contact-color="2"] { border-left: 4px solid var(--contact-2); padding-left: 12px; }
+.card[data-contact-color="3"] { border-left: 4px solid var(--contact-3); padding-left: 12px; }
+.card[data-contact-color="4"] { border-left: 4px solid var(--contact-4); padding-left: 12px; }
+.card[data-contact-color="5"] { border-left: 4px solid var(--contact-5); padding-left: 12px; }
+.card[data-contact-color="6"] { border-left: 4px solid var(--contact-6); padding-left: 12px; }
+.card[data-contact-color="7"] { border-left: 4px solid var(--contact-7); padding-left: 12px; }
+.card[data-contact-color="8"] { border-left: 4px solid var(--contact-8); padding-left: 12px; }
 
 /* Reminder modal */
 .modal-backdrop {
@@ -505,3 +586,173 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
   margin-left: 8px;
   flex-shrink: 0;
 }
+
+/* Category color-strip: 4px solid color on the left edge of a .card, picked
+   by its data-kind attribute. The accent-soft tint added to the existing
+   .card padding-left (12px) keeps content alignment close to the legacy 14px
+   even with the extra border eating into the inner space. The :hover state
+   does not change — only the resting state gets the color strip. */
+.card[data-kind] {
+  border-left: 4px solid var(--cat-general);
+  padding-left: 12px;
+}
+.card[data-kind="birthday"]    { border-left-color: var(--cat-birthday); }
+.card[data-kind="anniversary"] { border-left-color: var(--cat-anniversary); }
+.card[data-kind="festival"]    { border-left-color: var(--cat-festival); }
+.card[data-kind="memorial"]    { border-left-color: var(--cat-memorial); }
+.card[data-kind="work"]        { border-left-color: var(--cat-work); }
+.card[data-kind="like"]        { border-left-color: var(--cat-like); }
+.card[data-kind="taboo"]       { border-left-color: var(--cat-taboo); }
+.card[data-kind="gift"]        { border-left-color: var(--cat-gift); }
+.card[data-kind="important"]   { border-left-color: var(--cat-birthday); }
+.card[data-kind="reminder"]    { border-left-color: var(--accent); }
+
+/* ---- List-row layout (revised 2026-10-05) ----
+   Replaces the legacy <div class="row between"> template which crammed
+   every list row's content into the left half and left the right side
+   blank. The new `.list-row` is a three-column grid: left identifier ·
+   flex-1 main · right meta. The three columns map to:
+     .lr-id  : colored category glyph + (optional) primary avatar
+     .lr-main: title (1 line, ellipsis on overflow) + meta line
+     .lr-meta: time chip / countdown / actions — right-aligned, shrink-stacks.
+   The visual weight is balanced: long titles truncate instead of stretching
+   the row; long meta labels wrap if necessary but never collide with the
+   time chip. The left identifier picks up the same `data-kind` color
+   the card border does, so the visual identity survives the rewrite. */
+.list-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+}
+.list-row .lr-id {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.list-row .lr-main {
+  min-width: 0;            /* allow ellipsis on overflow */
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.list-row .lr-title {
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.list-row .lr-meta {
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.list-row .lr-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+  text-align: right;
+  min-width: 92px;          /* reserve so a short "明天 09:00" still anchors */
+}
+
+/* Category glyph — a soft-tinted rounded square holding the emoji.
+   Background echoes the data-kind color at low opacity so the row reads
+   as belonging to a category without competing with the title. */
+.cat-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  font-size: 18px;
+  background: var(--accent-soft);
+  flex-shrink: 0;
+  line-height: 1;
+}
+.cat-icon[data-tone="birthday"]    { background: rgba(232, 168, 120, 0.18); }
+.cat-icon[data-tone="anniversary"] { background: rgba(216, 168, 176, 0.22); }
+.cat-icon[data-tone="festival"]    { background: rgba(184, 168, 216, 0.22); }
+.cat-icon[data-tone="memorial"]    { background: rgba(244, 168, 160, 0.22); }
+.cat-icon[data-tone="work"]        { background: rgba(138, 168, 216, 0.22); }
+.cat-icon[data-tone="general"]     { background: var(--accent-soft); }
+.cat-icon[data-tone="important"]   { background: rgba(232, 168, 120, 0.18); }
+.cat-icon[data-tone="reminder"]    { background: var(--accent-soft); }
+
+/* Time chip — a small rounded label for the right-side meta block.
+   `urgent` raises the contrast so the eye catches it in a long list. */
+.time-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+.time-chip.urgent {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+.time-chip.muted { background: transparent; border-color: transparent; padding: 2px 0; }
+.time-chip .chip-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: currentColor; opacity: 0.6;
+}
+
+/* Avatar stack — a horizontal row of small avatars for multi-contact
+   references (e.g. memorial events). Each circle is 22px and overlaps
+   the previous one by 6px so a row of three reads as one block. */
+.avatar-stack { display: inline-flex; align-items: center; }
+.avatar-stack .stack-av {
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: white;
+  border: 2px solid var(--panel);
+  margin-left: -6px;
+  flex-shrink: 0;
+}
+.avatar-stack .stack-av:first-child { margin-left: 0; }
+.avatar-stack .stack-more {
+  margin-left: -6px;
+  background: var(--bg);
+  color: var(--muted);
+  border: 2px solid var(--panel);
+  border-radius: 50%;
+  width: 22px; height: 22px;
+  display: grid; place-items: center;
+  font-size: 10px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+/* The contact-list avatar — slightly larger to match the redesigned
+   height of a list row, and reads as a richer glyph block. */
+.list-row .lr-id .avatar-lg {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;       /* rounded-square to echo .cat-icon shape */
+  display: grid; place-items: center;
+  color: white;
+  font-weight: 600;
+  font-size: 16px;
+}
+
+/* For rows without a left identifier, drop the leading column.
+   Used by 联系人 list and others that already have a chunky left block. */
+.list-row.no-id { grid-template-columns: minmax(0, 1fr) auto; }

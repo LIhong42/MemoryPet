@@ -1,5 +1,5 @@
 // src/js/pages/events_work.js — 工作事件 list (category='work')
-import { api, escapeHtml, displayName, fmtDateTime, toast } from '../api.js';
+import { api, escapeHtml, firstChar, displayName, fmtDateTime, formatRelative, countdownTo, categoryIcon, contactColorIndex, toast } from '../api.js';
 import { register, navigate } from '../router.js';
 import {
   bulkEnterLinkHtml, bulkToolbarHtml, bulkSelectableRowHtml,
@@ -34,13 +34,13 @@ async function render(args, params) {
     ${events.length === 0
       ? `<div class="empty">还没有工作事件 · 点 + 新建 创建一个</div>`
       : events.map((e) => pageState.selectMode.active
-          ? bulkSelectableRowHtml(rowInner(e, cById), e.id, pageState.selectMode.selected.has(e.id))
+          ? bulkSelectableRowHtml(rowInner(e, cById), e.id, pageState.selectMode.selected.has(e.id), 'work')
           : renderRow(e, cById)).join('')}
   `;
 
   if (!pageState.selectMode.active) {
     app.querySelectorAll('.card.clickable').forEach((el) => {
-      el.onclick = () => navigate('/events/' + el.dataset.id);
+      el.onclick = () => navigate('/events/' + el.dataset.id + '?category=work');
     });
   }
   document.getElementById('new-event').onclick = () => navigate('/events/new?category=work');
@@ -81,26 +81,43 @@ async function render(args, params) {
 
 function renderRow(e, cById) {
   return `
-    <div class="card clickable" data-id="${escapeHtml(e.id)}">
-      <div class="row between">
-        <div>
-          <div><strong>${escapeHtml(e.title)}</strong>${e.tag_kind ? ` <span class="tag">${tagKindLabel(e.tag_kind)}</span>` : ''}</div>
-          <div class="meta">${fmtDateTime(e.next_fire_at || e.remind_date)} · ${kindLabel(e.remind_kind)}${e.lunar_month && e.lunar_day ? ' · 农历 ' + e.lunar_month + '月' + e.lunar_day + '日' : ''}${e.contact_id && cById[e.contact_id] ? ' · ' + escapeHtml(displayName(cById[e.contact_id])) : ''}${e.active ? '' : ' · 已结束'}</div>
-        </div>
-        <div>${e.remind ? '<span class="tag">提醒</span>' : ''}</div>
-      </div>
+    <div class="card list-row clickable" data-kind="work" data-id="${escapeHtml(e.id)}">
+      ${workRowInner(e, cById)}
     </div>
   `;
 }
 
 function rowInner(e, cById) {
+  return workRowInner(e, cById);
+}
+
+// Shared body for both idle renderRow (wrapped in a .card) and bulk-select
+// rowInner (wrapped in .bulk-row). The bulk-row caller prepends a checkbox;
+// the body itself is the same three-column grid for both modes.
+function workRowInner(e, cById) {
+  const contact = e.contact_id && cById && cById[e.contact_id] ? cById[e.contact_id] : null;
+  const contactName = contact ? displayName(contact) : '';
+  const contactTone = contact ? contactColorIndex(contact.name) : 0;
+  const metaParts = [kindLabel(e.remind_kind)];
+  if (e.lunar_month && e.lunar_day) metaParts.push(`农历 ${e.lunar_month}-${e.lunar_day}`);
+  if (contact) metaParts.push(escapeHtml(contactName));
+  if (!e.active) metaParts.push('已结束');
+  const meta = metaParts.join(' · ');
+  const target = e.next_fire_at || e.remind_date;
+  const rel = formatRelative(target);
+  const cd  = countdownTo(target);
   return `
-    <div class="row between">
-      <div>
-        <div><strong>${escapeHtml(e.title)}</strong>${e.tag_kind ? ` <span class="tag">${tagKindLabel(e.tag_kind)}</span>` : ''}</div>
-        <div class="meta">${fmtDateTime(e.next_fire_at || e.remind_date)} · ${kindLabel(e.remind_kind)}${e.lunar_month && e.lunar_day ? ' · 农历 ' + e.lunar_month + '月' + e.lunar_day + '日' : ''}${e.contact_id && cById[e.contact_id] ? ' · ' + escapeHtml(displayName(cById[e.contact_id])) : ''}${e.active ? '' : ' · 已结束'}</div>
-      </div>
-      <div>${e.remind ? '<span class="tag">提醒</span>' : ''}</div>
+    <div class="lr-id">
+      <span class="cat-icon" data-tone="work">${escapeHtml(categoryIcon('work', e.tag_kind))}</span>
+      ${contact ? `<span class="stack-av" style="background: var(--contact-${contactTone})" title="${escapeHtml(contactName)}">${escapeHtml(firstChar(contact.name))}</span>` : ''}
+    </div>
+    <div class="lr-main">
+      <div class="lr-title">${escapeHtml(e.title || '(无标题)')}</div>
+      <div class="lr-meta">${meta}</div>
+    </div>
+    <div class="lr-side">
+      <div class="time-chip ${cd ? 'urgent' : ''}"><span class="chip-dot"></span>${escapeHtml(rel)}</div>
+      ${cd ? `<div class="time-chip muted">${escapeHtml(cd)}</div>` : ''}
     </div>
   `;
 }

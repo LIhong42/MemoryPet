@@ -22,7 +22,7 @@ function resolveName(input) {
   return legacy || '';
 }
 
-function register({ queue, winMain, winPet, setPetState, getPetState, setActiveReminder }) {
+function register({ queue, winMain, winPet, setPetState, getPetState, setActiveReminder, petController }) {
   // ---- Contacts ----
   ipcMain.handle('contacts:list', () =>
     db.all('SELECT * FROM contacts WHERE listed = 1 ORDER BY updated_at DESC').map(db.parseContactRow));
@@ -785,11 +785,20 @@ function normFreeText(s) {
   });
 
   // ---- Pet / settings / windowing ----
-  ipcMain.handle('pet:get_state', () => ({
-    state: getPetState() ? 'REMINDER' : 'NORMAL',
-    count: queue.len(),
-    head: queue.head(),
-  }));
+  ipcMain.handle('pet:get_state', () => {
+    const head = queue.head();
+    return {
+      state: getPetState() ? 'REMINDER' : 'NORMAL',
+      count: queue.len(),
+      // Same shape as the `pet:state-changed` payload's head field — the
+      // renderer uses one setState() function for both.
+      head: head ? {
+        title: head.title,
+        contact_name: head.contact_name || null,
+        description: head.description || null,
+      } : null,
+    };
+  });
 
   ipcMain.handle('settings:get', (_e, key) => db.getSetting(key));
   ipcMain.handle('settings:set', (_e, key, value) => { db.setSetting(key, value); return true; });
@@ -807,6 +816,35 @@ function normFreeText(s) {
     x: parseInt(db.getSetting('pet_x') || '200', 10),
     y: parseInt(db.getSetting('pet_y') || '200', 10),
   }));
+
+  // ---- Pet species / walk toggle ----
+  // Both settings are persisted in the `settings` table and broadcast to the
+  // pet window so it can react immediately (species swap / animation stop).
+  // The PetController (main process) also reads them on construction.
+  ipcMain.handle('pet:get_species', () => {
+    const v = db.getSetting('pet_species');
+    return (v === 'dog' || v === 'bird') ? v : 'cat';
+  });
+  ipcMain.handle('pet:set_species', (_e, species) => {
+    if (petController && typeof petController.setSpecies === 'function') {
+      petController.setSpecies(species);
+    }
+    return true;
+  });
+  ipcMain.handle('pet:get_walk_enabled', () =>
+    db.getSetting('pet_walk_enabled') !== '0');
+  ipcMain.handle('pet:set_walk_enabled', (_e, enabled) => {
+    if (petController && typeof petController.setEnabled === 'function') {
+      petController.setEnabled(!!enabled);
+    }
+    return true;
+  });
+  ipcMain.handle('pet:set_paused', (_e, ms) => {
+    if (petController && typeof petController.setPaused === 'function') {
+      petController.setPaused(ms);
+    }
+    return true;
+  });
 
   ipcMain.handle('window:show_main', () => {
     if (winMain && !winMain.isDestroyed()) {
@@ -855,6 +893,13 @@ function normFreeText(s) {
     const cx = Math.max(wa.x, Math.min(wa.x + wa.width - w, nx));
     const cy = Math.max(wa.y, Math.min(wa.y + wa.height - h, ny));
     winPet.setPosition(cx, cy);
+    // Pause autonomous movement for ~2 s so the pet doesn't run away right
+    // after the user releases the drag. The renderer also calls setPaused at
+    // the start of every drag (see src/js/pet.js) — this is a safety net
+    // for rendererless moves.
+    if (petController && typeof petController.setPaused === 'function') {
+      petController.setPaused(2000);
+    }
     return true;
   });
 

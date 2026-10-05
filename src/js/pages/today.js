@@ -1,7 +1,7 @@
 // src/js/pages/today.js — Today's reminders + important dates + events.
 // The original home page's "当前提醒" block has been folded into the top
 // of this page (see PR description).
-import { api, escapeHtml, displayName, fmtDate, fmtDateTime } from '../api.js';
+import { api, escapeHtml, firstChar, displayName, eventKindAttr, fmtDate, fmtDateTime, formatRelative, countdownTo, categoryIcon, contactColorIndex } from '../api.js';
 import { register, navigate } from '../router.js';
 
 export async function render() {
@@ -29,37 +29,66 @@ export async function render() {
     <div class="section-header"><h2>⏰ 当前提醒</h2></div>
     ${activeReminders.length === 0
       ? `<div class="empty">暂无待办提醒 ✨</div>`
-      : activeReminders.map((r) => `
-        <div class="card clickable" data-source="${escapeHtml(r.source)}" data-id="${escapeHtml(r.source_id)}" data-action="reminder">
-          <div class="row between">
-            <div>
-              <div><strong>${escapeHtml(r.title)}</strong></div>
-              <div class="meta">${escapeHtml(r.source === 'event' ? '事件' : '重要日期')}${r.contact_name ? ' · ' + escapeHtml(r.contact_name) : ''}</div>
-            </div>
-            <span class="tag">待处理</span>
+      : activeReminders.map((r) => {
+        const kind = r.source === 'event' ? 'reminder' : 'important';
+        const sourceLabel = r.source === 'event' ? '事件' : '重要日期';
+        const contactName = r.contact_name || '';
+        return `
+        <div class="card list-row clickable" data-kind="${kind}" data-source="${escapeHtml(r.source)}" data-id="${escapeHtml(r.source_id)}" data-action="reminder">
+          <div class="lr-id">
+            <span class="cat-icon" data-tone="${kind}">⏰</span>
+          </div>
+          <div class="lr-main">
+            <div class="lr-title">${escapeHtml(r.title)} <span class="tag" style="margin-left:6px">待处理</span></div>
+            <div class="lr-meta">${escapeHtml(sourceLabel)}${contactName ? ' · ' + escapeHtml(contactName) : ''}</div>
+          </div>
+          <div class="lr-side">
+            <div class="time-chip urgent"><span class="chip-dot"></span>立即处理</div>
           </div>
         </div>
-      `).join('')}
+      `}).join('')}
 
     <div class="section-header"><h2>🎂 重要日期</h2></div>
     ${impDatesAll.length === 0
       ? `<div class="empty">今天没有重要日期</div>`
-      : impDatesAll.map((d) => `
-        <div class="card">
-          <div><strong>${escapeHtml(d.label)}</strong> · ${escapeHtml(displayName(d.contact))}</div>
-          <div class="meta">${kindLabel(d.kind)}${d.year ? ' · ' + (today.getFullYear() - d.year) + '岁' : ''}</div>
+      : impDatesAll.map((d) => {
+        const tone = contactColorIndex(d.contact.name);
+        return `
+        <div class="card list-row" data-kind="important" data-contact-color="${tone}">
+          <div class="lr-id">
+            <span class="cat-icon" data-tone="important">🎂</span>
+          </div>
+          <div class="lr-main">
+            <div class="lr-title">${escapeHtml(d.label)}</div>
+            <div class="lr-meta">${escapeHtml(displayName(d.contact))} · ${escapeHtml(kindLabel(d.kind))}${d.year ? ' · ' + (today.getFullYear() - d.year) + '岁' : ''}</div>
+          </div>
+          <div class="lr-side">
+            <div class="time-chip urgent"><span class="chip-dot"></span>今天</div>
+          </div>
         </div>
-      `).join('')}
+      `}).join('')}
 
     <div class="section-header"><h2>📅 事件</h2></div>
     ${events.length === 0
       ? `<div class="empty">今天没有事件</div>`
-      : events.map((e) => `
-        <div class="card clickable" data-id="${escapeHtml(e.id)}">
-          <div><strong>${escapeHtml(e.title)}</strong> <span class="tag">${escapeHtml(categoryTagLabel(e.category))}</span>${e.tag_kind ? ` <span class="tag">${tagKindLabel(e.tag_kind)}</span>` : ''}</div>
-          <div class="meta">${fmtDateTime(e.next_fire_at || e.remind_date)} · ${kindLabel(e.remind_kind)}${e.lunar_month && e.lunar_day ? ' · 农历 ' + e.lunar_month + '月' + e.lunar_day + '日' : ''}${e.contact_id && cById[e.contact_id] ? ' · ' + escapeHtml(displayName(cById[e.contact_id])) : ''}</div>
+      : events.map((e) => {
+        const kind = eventKindAttr(e);
+        const contact = e.contact_id && cById[e.contact_id] ? cById[e.contact_id] : null;
+        return `
+        <div class="card list-row clickable" data-kind="${escapeHtml(kind)}" data-id="${escapeHtml(e.id)}" data-category="${escapeHtml(e.category || 'general')}">
+          <div class="lr-id">
+            <span class="cat-icon" data-tone="${escapeHtml(kind)}">${escapeHtml(categoryIcon(e.category, e.tag_kind))}</span>
+            ${contact ? `<span class="stack-av" style="background: var(--contact-${contactColorIndex(contact.name)})" title="${escapeHtml(displayName(contact))}">${escapeHtml(firstChar(contact.name))}</span>` : ''}
+          </div>
+          <div class="lr-main">
+            <div class="lr-title">${escapeHtml(e.title)} <span class="tag" style="margin-left:6px">${escapeHtml(categoryTagLabel(e.category))}</span>${e.tag_kind ? ` <span class="tag">${escapeHtml(tagKindLabel(e.tag_kind))}</span>` : ''}</div>
+            <div class="lr-meta">${escapeHtml(kindLabel(e.remind_kind))}${e.lunar_month && e.lunar_day ? ' · 农历 ' + e.lunar_month + '-' + e.lunar_day : ''}${contact ? ' · ' + escapeHtml(displayName(contact)) : ''}</div>
+          </div>
+          <div class="lr-side">
+            <div class="time-chip urgent"><span class="chip-dot"></span>今天 ${escapeHtml((e.next_fire_at || e.remind_date || '').slice(11, 16) || '09:00')}</div>
+          </div>
         </div>
-      `).join('')}
+      `}).join('')}
   `;
 
   app.querySelectorAll('.card.clickable').forEach((el) => {
@@ -70,7 +99,7 @@ export async function render() {
         }));
       };
     } else {
-      el.onclick = () => navigate('/events/' + el.dataset.id);
+      el.onclick = () => navigate('/events/' + el.dataset.id + '?category=' + (el.dataset.category || 'general'));
     }
   });
 }

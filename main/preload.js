@@ -73,6 +73,11 @@ contextBridge.exposeInMainWorld('mp', {
     getPosition: () => ipcRenderer.invoke('pet:get_position'),
     showMain: () => ipcRenderer.invoke('window:show_main'),
     openReminder: () => ipcRenderer.invoke('window:open_reminder'),
+    // Species + autonomous-walk controls.
+    getSpecies: () => ipcRenderer.invoke('pet:get_species'),
+    setSpecies: (s) => ipcRenderer.invoke('pet:set_species', s),
+    getWalkEnabled: () => ipcRenderer.invoke('pet:get_walk_enabled'),
+    setWalkEnabled: (b) => ipcRenderer.invoke('pet:set_walk_enabled', b),
   },
   settings: {
     get: (k) => ipcRenderer.invoke('settings:get', k),

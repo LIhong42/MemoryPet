@@ -9,7 +9,7 @@
 // module-scoped object so it survives re-renders triggered by the
 // search input / inline form interactions.
 
-import { api, escapeHtml, firstChar, displayName, fmtDate, toast, todayYmd } from '../api.js';
+import { api, escapeHtml, firstChar, displayName, fmtDate, contactColorIndex, toast, todayYmd } from '../api.js';
 import { register, navigate } from '../router.js';
 import {
   bulkEnterLinkHtml, bulkToolbarHtml, bulkSelectableRowHtml,
@@ -55,17 +55,18 @@ function clientFilter(items, q, contactId) {
 
 function renderRow(it) {
   const id = escapeHtml(it.id);
+  const tone = contactColorIndex(it.contact_name);
   return `
-    <div class="card attribute-row" data-id="${id}">
-      <div class="row">
-        <div class="avatar">${escapeHtml(firstChar(it.contact_name))}</div>
-        <div style="flex:1; min-width:0;">
-          <div>
-            <a class="inline-link" href="#/contacts/${escapeHtml(it.contact_id)}">${escapeHtml(displayName({ name: it.contact_name }))}</a>
-          </div>
-          <div>${escapeHtml(it.description || '')}</div>
-          ${it.event ? `<div class="meta">${escapeHtml(fmtDate(it.event))}</div>` : ''}
-        </div>
+    <div class="card list-row attribute-row" data-id="${id}">
+      <div class="lr-id">
+        <div class="avatar-lg" style="background: var(--contact-${tone})">${escapeHtml(firstChar(it.contact_name))}</div>
+      </div>
+      <div class="lr-main">
+        <div class="lr-title"><a class="inline-link" href="#/contacts/${escapeHtml(it.contact_id)}">${escapeHtml(displayName({ name: it.contact_name }))}</a></div>
+        <div class="lr-meta">${escapeHtml(it.description || '')}</div>
+      </div>
+      <div class="lr-side">
+        ${it.event ? `<div class="time-chip"><span class="chip-dot"></span>${escapeHtml(fmtDate(it.event))}</div>` : ''}
         <div class="row" style="gap:6px">
           <button type="button" class="icon-btn attr-edit" data-id="${id}" title="编辑">✎</button>
           <button type="button" class="icon-btn attr-del"  data-id="${id}" title="删除">✕</button>
@@ -187,7 +188,7 @@ function rerender(app, routeKey, meta) {
             ? `<div class="empty">还没有${escapeHtml(meta.title)}条目 · 点右上「+ 新建」添加</div>`
             : `<div class="empty">没有匹配的${escapeHtml(meta.title)}</div>`)
         : filtered.map((it) => selectActive
-            ? bulkSelectableRowHtml(rowInner(it), it.id, s.selectMode.selected.has(it.id))
+            ? bulkSelectableRowHtml(rowInner(it), it.id, s.selectMode.selected.has(it.id), meta.kind)
             : renderRow(it)
           ).join('')
       }
@@ -310,17 +311,18 @@ function rerender(app, routeKey, meta) {
 // separate function avoids duplicating the avatar / name / event markup.
 function rowInner(it) {
   const id = escapeHtml(it.id);
+  const tone = contactColorIndex(it.contact_name);
   return `
-    <div class="card attribute-row" data-id="${id}" style="border:none; padding:0; background:transparent;">
-      <div class="row">
-        <div class="avatar">${escapeHtml(firstChar(it.contact_name))}</div>
-        <div style="flex:1; min-width:0;">
-          <div>
-            <a class="inline-link" href="#/contacts/${escapeHtml(it.contact_id)}">${escapeHtml(displayName({ name: it.contact_name }))}</a>
-          </div>
-          <div>${escapeHtml(it.description || '')}</div>
-          ${it.event ? `<div class="meta">${escapeHtml(fmtDate(it.event))}</div>` : ''}
-        </div>
+    <div class="list-row" data-id="${id}" style="background:transparent;">
+      <div class="lr-id">
+        <div class="avatar-lg" style="background: var(--contact-${tone})">${escapeHtml(firstChar(it.contact_name))}</div>
+      </div>
+      <div class="lr-main">
+        <div class="lr-title"><a class="inline-link" href="#/contacts/${escapeHtml(it.contact_id)}">${escapeHtml(displayName({ name: it.contact_name }))}</a></div>
+        <div class="lr-meta">${escapeHtml(it.description || '')}</div>
+      </div>
+      <div class="lr-side">
+        ${it.event ? `<div class="time-chip"><span class="chip-dot"></span>${escapeHtml(fmtDate(it.event))}</div>` : ''}
       </div>
     </div>
   `;
