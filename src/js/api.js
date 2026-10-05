@@ -18,6 +18,7 @@ export const api = {
     create: (input) => M.attributes.create(input),
     update: (id, input) => M.attributes.update(id, input),
     delete: (id) => M.attributes.delete(id),
+    deleteMany: (ids) => M.attributes.deleteMany(ids),
   },
   importantDates: {
     list: (contactId) => M.importantDates.list(contactId),
@@ -32,7 +33,9 @@ export const api = {
     create: (input) => M.events.create(input),
     update: (id, input) => M.events.update(id, input),
     delete: (id) => M.events.delete(id),
+    deleteMany: (ids) => M.events.deleteMany(ids),
     debugFireDueNow: () => M.events.debugFireDueNow(),
+    listFestivals: () => M.events.listFestivals(),
   },
   reminders: {
     listActive: () => M.reminders.listActive(),

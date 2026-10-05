@@ -1,6 +1,7 @@
 // main/time_util.js — pure functions for next-fire computation
 
 const DEFAULT_REMIND_TIME = '09:00';
+const { nextSolarDateForLunar } = require('./lunar');
 
 function parseHhmm(s) {
   if (!s) return null;
@@ -103,12 +104,26 @@ function computeNextFireEvent(ev, now) {
     const dayHint = ev.remind_date ? (parseDate(ev.remind_date) || {}).getDate?.() : undefined;
     cand = nextMonthlyAt(now, time, dayHint);
   } else if (kind === 'yearly') {
-    let day = 1, month = now.getMonth() + 1;
-    if (ev.remind_date) {
-      const d = parseDate(ev.remind_date);
-      if (d) { day = d.getDate(); month = d.getMonth() + 1; }
+    // Lunar yearly: fire on the next solar date matching (lunar_month,
+    // lunar_day). The solar equivalent shifts year-to-year, so this
+    // branch always recomputes from scratch. The early-return guard above
+    // only fires when the *cached* next_fire_at is still in the future —
+    // between fires we reuse it (it's already correct for this year).
+    if (ev.lunar_month && ev.lunar_day) {
+      const solar = nextSolarDateForLunar(ev.lunar_month, ev.lunar_day, now);
+      if (!solar) return null;
+      cand = new Date(
+        solar.getFullYear(), solar.getMonth(), solar.getDate(),
+        time.h, time.m, 0, 0
+      );
+    } else {
+      let day = 1, month = now.getMonth() + 1;
+      if (ev.remind_date) {
+        const d = parseDate(ev.remind_date);
+        if (d) { day = d.getDate(); month = d.getMonth() + 1; }
+      }
+      cand = nextYearlyAt(now, day, month, time);
     }
-    cand = nextYearlyAt(now, day, month, time);
   } else {
     return null;
   }

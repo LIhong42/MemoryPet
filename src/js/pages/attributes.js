@@ -11,6 +11,10 @@
 
 import { api, escapeHtml, firstChar, displayName, fmtDate, toast, todayYmd } from '../api.js';
 import { register, navigate } from '../router.js';
+import {
+  bulkEnterLinkHtml, bulkToolbarHtml, bulkSelectableRowHtml,
+  wireBulkEnter, wireBulkToolbar, wireBulkRowChecks,
+} from '../bulk_delete.js';
 
 const META = {
   likes:  { title: '喜好', kind: 'like',  singular: '喜好' },
@@ -21,13 +25,20 @@ const META = {
 // Per-route state. Reset whenever a new page module load happens, which is
 // fine for a hash-router app — the state lives across renders within a
 // single page visit.
+//
+// `selectMode.selected` holds the ids currently checked while in batch-
+// delete mode. It's a Set so add/delete is O(1) and the UI can flip rows
+// on/off without rebuilding the whole list.
 const state = {
   likes:  { items: [], contacts: [], query: '', contactId: '', editingId: null,
-            draftDescription: '', draftEvent: '', draftContactId: '', formOpen: false },
+            draftDescription: '', draftEvent: '', draftContactId: '', formOpen: false,
+            selectMode: { active: false, selected: new Set() } },
   taboos: { items: [], contacts: [], query: '', contactId: '', editingId: null,
-            draftDescription: '', draftEvent: '', draftContactId: '', formOpen: false },
+            draftDescription: '', draftEvent: '', draftContactId: '', formOpen: false,
+            selectMode: { active: false, selected: new Set() } },
   gifts:  { items: [], contacts: [], query: '', contactId: '', editingId: null,
-            draftDescription: '', draftEvent: '', draftContactId: '', formOpen: false },
+            draftDescription: '', draftEvent: '', draftContactId: '', formOpen: false,
+            selectMode: { active: false, selected: new Set() } },
 };
 
 function clientFilter(items, q, contactId) {
@@ -106,6 +117,7 @@ function rerender(app, routeKey, meta) {
   const noContacts = !s.contacts.length;
   const showForm = s.formOpen || s.editingId;
   const hasActiveFilter = !!(s.query || s.contactId);
+  const selectActive = s.selectMode.active;
 
   // Build contact dropdown options. Only include contacts that actually
   // appear in `s.items` so the dropdown never shows entries with no items
@@ -119,6 +131,23 @@ function rerender(app, routeKey, meta) {
         })
         .sort((a, b) => displayName(a).localeCompare(displayName(b), 'zh'))
     : [];
+
+  // Header "进入批量删除" link — only shown in idle mode and only when
+  // there's at least one row to pick from. Inline next to the section
+  // title so the user can find it without hunting.
+  const enterBulkLink = (!selectActive && filtered.length > 0)
+    ? bulkEnterLinkHtml() : '';
+
+  // Toolbar pinned above the list while in select mode. The count is the
+  // number of currently-checked rows (NOT total filtered), so the user
+  // sees exactly what they're about to delete.
+  const toolbar = selectActive
+    ? bulkToolbarHtml({
+        count: s.selectMode.selected.size,
+        total: filtered.length,
+        kindLabel: `${meta.title}条目`,
+      })
+    : '';
 
   app.innerHTML = `
     <div class="row between">
@@ -147,13 +176,20 @@ function rerender(app, routeKey, meta) {
             ? `${escapeHtml(displayName(contactsWithItems.find((c) => c.id === s.contactId) || { name: '' }))} 的${escapeHtml(meta.title)}`
             : `所有${escapeHtml(meta.title)}`}
           （${filtered.length}${hasActiveFilter ? ` / ${s.items.length}` : ''}）
+          ${enterBulkLink}
         </h2>
       </div>
+
+      ${toolbar}
+
       ${filtered.length === 0
         ? (s.items.length === 0
             ? `<div class="empty">还没有${escapeHtml(meta.title)}条目 · 点右上「+ 新建」添加</div>`
             : `<div class="empty">没有匹配的${escapeHtml(meta.title)}</div>`)
-        : filtered.map(renderRow).join('')
+        : filtered.map((it) => selectActive
+            ? bulkSelectableRowHtml(rowInner(it), it.id, s.selectMode.selected.has(it.id))
+            : renderRow(it)
+          ).join('')
       }
     `}
   `;
@@ -197,34 +233,97 @@ function rerender(app, routeKey, meta) {
 
   if (showForm) wireForm(app, routeKey, meta);
 
-  // Row actions
-  app.querySelectorAll('.attr-edit').forEach((btn) => {
-    btn.onclick = () => {
-      const id = btn.dataset.id;
-      const it = s.items.find((x) => x && x.id === id);
-      if (!it) return;
-      s.editingId = id;
-      s.draftDescription = it.description || '';
-      s.draftEvent = it.event || '';
-      s.formOpen = false;
-      rerender(app, routeKey, meta);
+  // Row actions (idle mode only — in select mode we render a checkbox on
+  // each row instead of the per-row edit/delete buttons).
+  if (!selectActive) {
+    app.querySelectorAll('.attr-edit').forEach((btn) => {
+      btn.onclick = () => {
+        const id = btn.dataset.id;
+        const it = s.items.find((x) => x && x.id === id);
+        if (!it) return;
+        s.editingId = id;
+        s.draftDescription = it.description || '';
+        s.draftEvent = it.event || '';
+        s.formOpen = false;
+        rerender(app, routeKey, meta);
+      };
+    });
+    app.querySelectorAll('.attr-del').forEach((btn) => {
+      btn.onclick = async () => {
+        const id = btn.dataset.id;
+        if (!confirm('确认删除该条目？')) return;
+        try {
+          await api.attributes.delete(id);
+          toast('已删除');
+        } catch (e) {
+          toast('删除失败：' + (e.message || e));
+          return;
+        }
+        await refreshItems(routeKey);
+        rerender(app, routeKey, meta);
+      };
+    });
+  }
+
+  // Bulk-select mode wiring.
+  if (selectActive) {
+    // Handlers are shared by the toolbar's delete/exit buttons AND the
+    // lighter-weight onChange path (see below) so we hoist them up.
+    const handlers = {
+      onDelete: async (ids) => {
+        const result = await api.attributes.deleteMany(ids);
+        await refreshItems(routeKey);
+        rerender(app, routeKey, meta);
+        return result;
+      },
+      onExit: () => {
+        s.selectMode.active = false;
+        s.selectMode.selected = new Set();
+        rerender(app, routeKey, meta);
+      },
     };
-  });
-  app.querySelectorAll('.attr-del').forEach((btn) => {
-    btn.onclick = async () => {
-      const id = btn.dataset.id;
-      if (!confirm('确认删除该条目？')) return;
-      try {
-        await api.attributes.delete(id);
-        toast('已删除');
-      } catch (e) {
-        toast('删除失败：' + (e.message || e));
-        return;
-      }
-      await refreshItems(routeKey);
-      rerender(app, routeKey, meta);
+    // Lightweight onChange: a single checkbox flip just refreshes the
+    // toolbar's count + enabled state without rebuilding the whole list
+    // (which would steal the user's focus from the checkbox).
+    s.selectMode.onChange = () => {
+      const t = app.querySelector('[data-bulk-toolbar]');
+      if (!t) return;
+      t.outerHTML = bulkToolbarHtml({
+        count: s.selectMode.selected.size,
+        total: filtered.length,
+        kindLabel: `${meta.title}条目`,
+      });
+      wireBulkToolbar(app, s.selectMode, handlers);
     };
+    wireBulkRowChecks(app, s.selectMode);
+    wireBulkToolbar(app, s.selectMode, handlers);
+  }
+  wireBulkEnter(app, () => {
+    s.selectMode.active = true;
+    s.selectMode.selected = new Set();
+    rerender(app, routeKey, meta);
   });
+}
+
+// Inner row template — same content as the outer card but WITHOUT the
+// wrapper. Used inside bulkSelectableRowHtml's wrapper. Keeping this as a
+// separate function avoids duplicating the avatar / name / event markup.
+function rowInner(it) {
+  const id = escapeHtml(it.id);
+  return `
+    <div class="card attribute-row" data-id="${id}" style="border:none; padding:0; background:transparent;">
+      <div class="row">
+        <div class="avatar">${escapeHtml(firstChar(it.contact_name))}</div>
+        <div style="flex:1; min-width:0;">
+          <div>
+            <a class="inline-link" href="#/contacts/${escapeHtml(it.contact_id)}">${escapeHtml(displayName({ name: it.contact_name }))}</a>
+          </div>
+          <div>${escapeHtml(it.description || '')}</div>
+          ${it.event ? `<div class="meta">${escapeHtml(fmtDate(it.event))}</div>` : ''}
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 function wireForm(app, routeKey, meta) {

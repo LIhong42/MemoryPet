@@ -49,8 +49,8 @@ async function runSearch(q) {
       <div class="section-header"><h2>事件 (${r.events.length})</h2></div>
       ${r.events.map((e) => `
         <div class="card clickable" data-id="${escapeHtml(e.id)}" data-action="event">
-          <div><strong>${escapeHtml(e.title)}</strong></div>
-          <div class="meta">${fmtDateTime(e.next_fire_at || e.remind_date)} · ${kindLabel(e.remind_kind)}</div>
+          <div><strong>${escapeHtml(e.title)}</strong> <span class="tag">${escapeHtml(categoryTagLabel(e.category))}</span>${e.tag_kind ? ` <span class="tag">${tagKindLabel(e.tag_kind)}</span>` : ''}</div>
+          <div class="meta">${fmtDateTime(e.next_fire_at || e.remind_date)} · ${kindLabel(e.remind_kind)}${e.lunar_month && e.lunar_day ? ' · 农历 ' + e.lunar_month + '月' + e.lunar_day + '日' : ''}</div>
         </div>
       `).join('')}` : ''}
     ${r.important_dates.length > 0 ? `
@@ -72,6 +72,14 @@ async function runSearch(q) {
 
 function kindLabel(k) {
   return ({ one_time: '一次', daily: '每天', monthly: '每月', yearly: '每年', none: '不提醒' }[k]) || k || '';
+}
+
+function categoryTagLabel(c) {
+  return ({ general: '提醒', memorial: '回忆', work: '工作' }[c]) || c || '';
+}
+
+function tagKindLabel(k) {
+  return ({ birthday: '生日', anniversary: '纪念日', festival: '节日' }[k]) || '';
 }
 
 register('/search', render);

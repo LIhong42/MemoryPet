@@ -34,7 +34,13 @@ CREATE INDEX IF NOT EXISTS idx_imp_dates_contact ON important_dates(contact_id);
 
 CREATE TABLE IF NOT EXISTS events (
   id            TEXT PRIMARY KEY,
-  contact_id    TEXT REFERENCES contacts(id) ON DELETE SET NULL,
+  -- ON DELETE CASCADE: when a contact is deleted, any events that reference
+  -- ONLY that contact should be removed too (the contact's preferences and
+  -- important context go with them). If a future schema introduces an
+  -- event_contacts many-to-many table, that table will own the relationship
+  -- and the deletion logic in deleteContactCascade will skip events that
+  -- are still referenced by other contacts.
+  contact_id    TEXT REFERENCES contacts(id) ON DELETE CASCADE,
   title         TEXT NOT NULL,
   description   TEXT,
   remind        INTEGER NOT NULL DEFAULT 0,
@@ -44,6 +50,10 @@ CREATE TABLE IF NOT EXISTS events (
   next_fire_at  TEXT,
   last_fired_at TEXT,
   active        INTEGER NOT NULL DEFAULT 1,
+  category      TEXT NOT NULL DEFAULT 'general',
+  tag_kind      TEXT,
+  lunar_month   INTEGER,
+  lunar_day     INTEGER,
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL
 );
@@ -126,6 +136,10 @@ async function open(dbPathArg) {
   db.run(SCHEMA);
   migrateContactsV2();
   migrateAttributesV1();
+  migrateEventsCategoryV1();
+  migrateEventsTagKindV1();
+  migrateEventsContactCascadeV1();
+  seedDefaultFestivals();
 
   // Settings defaults
   const s = db.prepare('SELECT value FROM settings WHERE key = ?');
@@ -397,10 +411,417 @@ function getAttribute(id) {
   return one('SELECT * FROM contact_attributes WHERE id = ?', [id]);
 }
 
+// Hard-delete a contact and every row that references it.
+//
+// Why this exists:
+//   * The schema already declares ON DELETE CASCADE on important_dates and
+//     contact_attributes, so SQLite would clean those up automatically if we
+//     simply ran `DELETE FROM contacts WHERE id = ?`. We don't rely on that
+//     alone because:
+//       - `events.contact_id` is the one relationship that is *not* safe to
+//         cascade unconditionally. The user explicitly asked for events tied
+//         to this contact to be removed UNLESS the event is also tied to other
+//         contacts. Today's schema only stores a single contact_id per event,
+//         so in practice this means "delete the event"; but the helper checks
+//         a sibling `event_contacts` table (if present) so the same logic
+//         keeps working when many-to-many is added later.
+//       - search_index rows are not FK-linked, so we have to delete them
+//         manually.
+//       - reminder_acks and active reminder queue entries are not FK-linked
+//         either; we want to drop them so dismissed/snoozed state doesn't
+//         resurrect after a contact is gone.
+//   * This is called from the ipc handler `contacts:delete` with the
+//     caller-provided `queue` so we can prune live reminders without reaching
+//     across module boundaries.
+//
+// Returns a small summary the renderer can show ("已删除：1 联系人 / 12 偏好
+// 条目 / 3 事件 / …") so the user has a clear confirmation of what was
+// removed.
+function deleteContactCascade(id, queue) {
+  if (!db) throw new Error('DB not opened');
+  const c = one('SELECT * FROM contacts WHERE id = ?', [id]);
+  if (!c) {
+    return { deleted: false, summary: null };
+  }
+
+  // Snapshot the affected ids BEFORE we start deleting so the summary
+  // reflects what we touched (not what's left after).
+  const attrIds = all(
+    'SELECT id FROM contact_attributes WHERE contact_id = ?', [id]
+  ).map((r) => r.id);
+  const dateIds = all(
+    'SELECT id FROM important_dates WHERE contact_id = ?', [id]
+  ).map((r) => r.id);
+
+  // ---- Events: pick out the ones to delete vs. ones to keep ----
+  // Today's schema only has events.contact_id (a single FK), so every event
+  // tied to this contact is exclusively tied to this contact — delete them
+  // all. If a future schema adds an `event_contacts` many-to-many table, we
+  // keep events that are still referenced by at least one other contact.
+  //
+  // We probe for the table dynamically so this helper stays correct whether
+  // or not the migration has been applied. A missing table is the common
+  // case (current schema) and falls through to "delete everything".
+  const ownedEventIds = all(
+    'SELECT id FROM events WHERE contact_id = ?', [id]
+  ).map((r) => r.id);
+  const eventIdsToDelete = (() => {
+    let hasJoin = false;
+    try {
+      hasJoin = !!one(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='event_contacts'"
+      );
+    } catch { /* pragma probe failed — treat as no join table */ }
+    if (!hasJoin) return ownedEventIds;
+
+    const keep = new Set();
+    for (const eid of ownedEventIds) {
+      const other = one(
+        'SELECT 1 FROM event_contacts WHERE event_id = ? AND contact_id != ? LIMIT 1',
+        [eid, id]
+      );
+      if (other) keep.add(eid);
+    }
+    return ownedEventIds.filter((eid) => !keep.has(eid));
+  })();
+  const keptEventIds = ownedEventIds.filter((eid) => !eventIdsToDelete.includes(eid));
+
+  // ---- Delete in FK-safe order ----
+  // Reminder acks for events/dates we're about to remove — clearing these
+  // first means the scheduler / pet state never sees dangling source_ids.
+  if (eventIdsToDelete.length) {
+    const placeholders = eventIdsToDelete.map(() => '?').join(',');
+    run(
+      `DELETE FROM reminder_acks
+        WHERE (source = 'event' AND source_id IN (${placeholders}))`,
+      eventIdsToDelete
+    );
+  }
+  if (dateIds.length) {
+    const placeholders = dateIds.map(() => '?').join(',');
+    run(
+      `DELETE FROM reminder_acks
+        WHERE (source = 'important_date' AND source_id IN (${placeholders}))`,
+      dateIds
+    );
+  }
+  // search_index cleanup. events/dates/attrs also have rows here; the FK
+  // cascade on contacts will drop contact rows via deleteSearch below, but
+  // events and important_dates are not FK-linked to contacts so we have to
+  // remove them by hand. Attribute rows aren't indexed (only the contact
+  // body includes them via buildContactBody) so no per-attribute search
+  // cleanup is needed.
+  deleteSearch('contact', id);
+  for (const eid of eventIdsToDelete) deleteSearch('event', eid);
+  for (const did of dateIds)        deleteSearch('important_date', did);
+
+  // Drop live reminder queue entries the same way so the pet UI doesn't
+  // keep nagging about a contact that no longer exists.
+  if (queue && typeof queue.remove === 'function') {
+    for (const eid of eventIdsToDelete) queue.remove('event', eid);
+    for (const did of dateIds)        queue.remove('important_date', did);
+  }
+
+  // Now the actual hard delete. SQLite handles important_dates and
+  // contact_attributes via their ON DELETE CASCADE declarations; we don't
+  // need to issue those deletes ourselves. We DO need to delete events we
+  // own — and once events are gone, the FK cascade on contacts will let
+  // SQLite drop the contact row itself. We do the contact DELETE last so a
+  // mid-cascade failure leaves us in a recoverable state.
+  if (eventIdsToDelete.length) {
+    const placeholders = eventIdsToDelete.map(() => '?').join(',');
+    run(`DELETE FROM events WHERE id IN (${placeholders})`, eventIdsToDelete);
+  }
+  // Set any remaining events to NULL (won't happen under current schema, but
+  // covers the case where a future many-to-many migration temporarily leaves
+  // a contact_id dangling before cleanup).
+  if (keptEventIds.length) {
+    const placeholders = keptEventIds.map(() => '?').join(',');
+    run(
+      `UPDATE events SET contact_id = NULL WHERE id IN (${placeholders})`,
+      keptEventIds
+    );
+  }
+  run('DELETE FROM contacts WHERE id = ?', [id]);
+
+  return {
+    deleted: true,
+    summary: {
+      contact: 1,
+      attributes: attrIds.length,
+      important_dates: dateIds.length,
+      events: eventIdsToDelete.length,
+      events_kept: keptEventIds.length,
+    },
+  };
+}
+
+// ---- events v1 migration ----
+// Adds `category` (default 'general'), `lunar_month`, `lunar_day` columns to
+// existing events tables. Guarded by a settings key so it never re-runs.
+function migrateEventsCategoryV1() {
+  if (!db) return;
+  if (getSetting('events_category_v1_applied') === '1') return;
+
+  const cols = db.prepare("PRAGMA table_info(events)");
+  const names = new Set();
+  while (cols.step()) names.add(cols.get()[1]);
+  cols.free();
+
+  try {
+    if (!names.has('category')) {
+      // NOT NULL with DEFAULT — backfills existing rows with 'general'.
+      db.run("ALTER TABLE events ADD COLUMN category    TEXT NOT NULL DEFAULT 'general'");
+    }
+    if (!names.has('lunar_month')) {
+      db.run("ALTER TABLE events ADD COLUMN lunar_month INTEGER");
+    }
+    if (!names.has('lunar_day')) {
+      db.run("ALTER TABLE events ADD COLUMN lunar_day   INTEGER");
+    }
+    // Index on the new column — created here (not in SCHEMA) so it does
+    // not fail on pre-existing DBs that lack the column. SCHEMA runs first
+    // and would abort on "no such column: category" before the ALTER TABLE
+    // below could add it.
+    db.run("CREATE INDEX IF NOT EXISTS idx_events_category ON events(category)");
+    setSetting('events_category_v1_applied', '1');
+  } catch (e) {
+    console.error('events v1 migration failed:', e);
+  }
+}
+
+// ---- events v2 migration ----
+// Adds `tag_kind` column (one of 'birthday' / 'anniversary' / 'festival' / null).
+// Distinct from the schema-level CREATE TABLE so a fresh DB doesn't trip on
+// the same "no such column" race as v1.
+function migrateEventsTagKindV1() {
+  if (!db) return;
+  if (getSetting('events_tag_kind_v1_applied') === '1') return;
+
+  const cols = db.prepare("PRAGMA table_info(events)");
+  const names = new Set();
+  while (cols.step()) names.add(cols.get()[1]);
+  cols.free();
+
+  try {
+    if (!names.has('tag_kind')) {
+      db.run("ALTER TABLE events ADD COLUMN tag_kind TEXT");
+    }
+    setSetting('events_tag_kind_v1_applied', '1');
+  } catch (e) {
+    console.error('events tag_kind v1 migration failed:', e);
+  }
+}
+
+// ---- events v3 migration ----
+// Rebuild the events table so the foreign key on contact_id is
+// ON DELETE CASCADE instead of ON DELETE SET NULL. SQLite does not support
+// changing a foreign key's ON DELETE action in place, so the migration is
+// a "rebuild under a temporary name" dance:
+//
+//   1. Disable foreign keys (PRAGMA deferral won't help — the FK action is
+//      metadata and we need the rebuild to commit).
+//   2. CREATE events_new with the desired schema.
+//   3. INSERT … SELECT every row from the old events table.
+//   4. DROP the old events table.
+//   5. Rename events_new → events.
+//   6. Recreate the indexes that lived on the old table.
+//   7. Re-enable foreign keys.
+//
+// Why we need this at all: the user asked for "delete a contact → also
+// delete its events". The v1 schema's ON DELETE SET NULL orphaned every
+// event instead of removing it, which silently kept dozens of reminder
+// rows alive after a contact disappeared. CASCADE makes the contract
+// match the user's expectation.
+//
+// Guarded by `events_fk_cascade_applied` so it only runs once per DB.
+function migrateEventsContactCascadeV1() {
+  if (!db) return;
+  if (getSetting('events_fk_cascade_applied') === '1') return;
+
+  // Probe the existing FK action. sqlite_master doesn't expose it directly,
+  // so we check the foreign_key_list pragma against the source pragma on
+  // the contact_id column. The pragma returns the on_delete string for the
+  // FK that owns the given child column.
+  let needsRebuild = false;
+  try {
+    const s = db.prepare("PRAGMA foreign_key_list(events)");
+    while (s.step()) {
+      const row = s.getAsObject();
+      if (row.from === 'contact_id' && row.on_delete !== 'CASCADE') {
+        needsRebuild = true;
+        break;
+      }
+    }
+    s.free();
+  } catch (e) {
+    console.error('events fk probe failed:', e);
+    return; // can't determine — leave the schema alone, don't loop on boot
+  }
+
+  if (!needsRebuild) {
+    setSetting('events_fk_cascade_applied', '1');
+    return;
+  }
+
+  try {
+    db.run('PRAGMA foreign_keys = OFF');
+    db.run('BEGIN');
+    db.run(`
+      CREATE TABLE events_new (
+        id            TEXT PRIMARY KEY,
+        contact_id    TEXT REFERENCES contacts(id) ON DELETE CASCADE,
+        title         TEXT NOT NULL,
+        description   TEXT,
+        remind        INTEGER NOT NULL DEFAULT 0,
+        remind_kind   TEXT NOT NULL DEFAULT 'one_time',
+        remind_time   TEXT,
+        remind_date   TEXT,
+        next_fire_at  TEXT,
+        last_fired_at TEXT,
+        active        INTEGER NOT NULL DEFAULT 1,
+        category      TEXT NOT NULL DEFAULT 'general',
+        tag_kind      TEXT,
+        lunar_month   INTEGER,
+        lunar_day     INTEGER,
+        created_at    TEXT NOT NULL,
+        updated_at    TEXT NOT NULL
+      )
+    `);
+    db.run(`
+      INSERT INTO events_new
+        SELECT id, contact_id, title, description, remind, remind_kind,
+               remind_time, remind_date, next_fire_at, last_fired_at, active,
+               category, tag_kind, lunar_month, lunar_day, created_at, updated_at
+        FROM events
+    `);
+    db.run('DROP TABLE events');
+    db.run('ALTER TABLE events_new RENAME TO events');
+    db.run('CREATE INDEX IF NOT EXISTS idx_events_next_fire ON events(next_fire_at)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_events_contact    ON events(contact_id)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_events_category   ON events(category)');
+    db.run('COMMIT');
+    setSetting('events_fk_cascade_applied', '1');
+    markDirty();
+  } catch (e) {
+    try { db.run('ROLLBACK'); } catch {}
+    console.error('events FK CASCADE migration failed:', e);
+  } finally {
+    try { db.run('PRAGMA foreign_keys = ON'); } catch {}
+  }
+}
+
+// ---- default festival seed ----
+// On first run (or any DB that doesn't yet have built-in festival events),
+// insert one row per built-in festival with category='general',
+// tag_kind='festival', title=<festival code>. All are pre-enabled by default —
+// the user can delete ones they don't care about. Guarded by a settings key
+// so we don't re-insert after a manual delete. (If you want to re-seed, clear
+// that key — see SETTINGS_DEFAULT_FESTIVALS_KEY.)
+//
+// v2 adds reconciliation: rows for festival codes that are no longer in the
+// built-in catalog are deleted. This handles catalog removals (e.g. dropping
+// the solar 七夕节 when we switched to lunar 七夕 only) without leaving stale
+// rows behind. Bumping the key ensures the cleanup runs on existing DBs.
+const SETTINGS_DEFAULT_FESTIVALS_KEY = 'default_festivals_seeded_v2';
+
+// Compute the next solar (year, month, day) for a built-in festival so we
+// can pre-populate next_fire_at and remind_date. Returns null on failure.
+function festivalNextYmd(code) {
+  try {
+    const { nextFestivalSolar } = require('./festivals');
+    const solar = nextFestivalSolar(code, new Date());
+    if (!solar) return null;
+    return `${solar.year}-${String(solar.month).padStart(2, '0')}-${String(solar.day).padStart(2, '0')}`;
+  } catch {
+    return null;
+  }
+}
+
+function seedDefaultFestivals() {
+  if (!db) return;
+  if (getSetting(SETTINGS_DEFAULT_FESTIVALS_KEY) === '1') return;
+  try {
+    const { listFestivals } = require('./festivals');
+    const { computeNextFireEvent, fmtDateTime } = require('./time_util');
+
+    // Reconciliation: delete any auto-seeded festival rows whose code is no
+    // longer in the built-in catalog (e.g. when a festival was retired). We
+    // only touch rows the seed migration itself created — rows the user
+    // added manually with tag_kind='festival' are left alone because we
+    // can't reliably tell them apart from the seed at the SQL level.
+    //
+    // In practice all category='general' tag_kind='festival' rows are
+    // seeded by this function on first run, so deleting the stale ones is
+    // safe. If a user wants a custom festival row they can create one via
+    // the form (which goes through a different code path and won't be hit
+    // here because tag_kind is set to 'festival' only by this seed or by
+    // internal callers — never from the user-facing form).
+    const catalogCodes = new Set(listFestivals().map((f) => f.code));
+    const stale = all(
+      `SELECT id, title FROM events
+         WHERE category = 'general' AND tag_kind = 'festival'`
+    ).filter((r) => r.title && !catalogCodes.has(r.title));
+    for (const r of stale) {
+      run('DELETE FROM events WHERE id = ?', [r.id]);
+      deleteSearch('event', r.id);
+    }
+
+    const existing = new Set(
+      all(
+        `SELECT title FROM events
+           WHERE category = 'general' AND tag_kind = 'festival'`
+      ).map((r) => r.title)
+    );
+    const now = nowStr();
+    for (const f of listFestivals()) {
+      if (existing.has(f.code)) continue;
+      const remindDate = festivalNextYmd(f.code);
+      const nf = computeNextFireEvent({
+        title: f.code,
+        description: '',
+        remind: true,
+        remind_kind: 'yearly',
+        remind_time: '09:00',
+        remind_date: remindDate,
+        contact_id: null,
+        category: 'general',
+        active: true,
+        next_fire_at: null,
+        last_fired_at: null,
+        lunar_month: null,
+        lunar_day: null,
+        tag_kind: 'festival',
+      }, new Date());
+      run(
+        `INSERT INTO events(id, contact_id, title, description, remind, remind_kind,
+                            remind_time, remind_date, next_fire_at, last_fired_at, active,
+                            category, tag_kind, lunar_month, lunar_day,
+                            created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1,
+                 ?, ?, ?, ?, ?, ?)`,
+        [newId(), null, f.code, null, 1, 'yearly', '09:00', remindDate,
+         nf ? fmtDateTime(nf) : null,
+         'general', 'festival', null, null, now, now]
+      );
+      // The search index isn't strictly necessary for festival rows but
+      // upsertSearch is a best-effort helper; skipping it is fine.
+    }
+    setSetting(SETTINGS_DEFAULT_FESTIVALS_KEY, '1');
+  } catch (e) {
+    console.error('default festival seed failed:', e);
+  }
+}
+
 module.exports = {
   open, get, save, newId, nowStr, all, one, run,
   upsertSearch, deleteSearch, getSetting, setSetting,
   markDirty,
   parseContactRow, buildContactBody, safeParseArray,
   listAttributes, getAttribute,
+  deleteContactCascade,
+  // Exposed so ipc.js can call them (avoids duplicating logic in IPC handlers).
+  // These wrap require() at call-time so we don't introduce a require cycle
+  // between db.js and the helpers.
+  _seedFestivals: () => seedDefaultFestivals(),
 };

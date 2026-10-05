@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('mp', {
     create: (input) => ipcRenderer.invoke('attributes:create', input),
     update: (id, input) => ipcRenderer.invoke('attributes:update', id, input),
     delete: (id) => ipcRenderer.invoke('attributes:delete', id),
+    deleteMany: (ids) => ipcRenderer.invoke('attributes:delete_many', ids),
   },
   // important dates
   importantDates: {
@@ -32,7 +33,9 @@ contextBridge.exposeInMainWorld('mp', {
     create: (input) => ipcRenderer.invoke('events:create', input),
     update: (id, input) => ipcRenderer.invoke('events:update', id, input),
     delete: (id) => ipcRenderer.invoke('events:delete', id),
+    deleteMany: (ids) => ipcRenderer.invoke('events:delete_many', ids),
     debugFireDueNow: () => ipcRenderer.invoke('events:debug_fire_due_now'),
+    listFestivals: () => ipcRenderer.invoke('events:list_festivals'),
   },
   // reminders
   reminders: {

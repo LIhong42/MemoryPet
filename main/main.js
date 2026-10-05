@@ -9,6 +9,17 @@ const ipc = require('./ipc');
 
 const isDev = process.argv.includes('--dev') || !app.isPackaged;
 
+// Surface unhandled rejections with a stack instead of Node's default one-
+// liner. Prevents the cryptic "UnhandledPromiseRejectionWarning" that
+// Electron emits otherwise when any awaitable chain in the main process
+// rejects without a catch.
+process.on('unhandledRejection', (reason) => {
+  console.error('[main] unhandled rejection:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[main] uncaught exception:', err);
+});
+
 // Single instance
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {

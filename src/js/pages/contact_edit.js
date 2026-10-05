@@ -63,9 +63,28 @@ async function render(args) {
   };
   if (!isNew) {
     document.getElementById('del').onclick = async () => {
-      if (!confirm('确认删除该联系人？关联事件将变为独立事件，喜好/忌讳/礼物条目也会一并删除。')) return;
-      await api.contacts.delete(c.id);
-      toast('已删除');
+      if (!confirm('确认删除该联系人？\n\n该联系人关联的所有喜好、忌讳、礼物、重要日期以及只与该联系人关联的事件都会被一并删除。多联系人共享的事件会被保留（仅去除关联）。')) return;
+      let result;
+      try {
+        result = await api.contacts.delete(c.id);
+      } catch (e) {
+        toast('删除失败：' + (e.message || e));
+        return;
+      }
+      // Show a brief summary of what was actually removed so the user knows
+      // the cascade worked as expected. Keep it short — the contact page is
+      // about to disappear anyway.
+      if (result && result.deleted && result.summary) {
+        const s = result.summary;
+        const parts = [];
+        if (s.attributes)       parts.push(`${s.attributes} 条喜好/忌讳/礼物`);
+        if (s.important_dates)  parts.push(`${s.important_dates} 个重要日期`);
+        if (s.events)           parts.push(`${s.events} 个事件`);
+        if (s.events_kept)      parts.push(`保留 ${s.events_kept} 个共享事件`);
+        toast(parts.length ? `已删除 · ${parts.join(' / ')}` : '已删除');
+      } else {
+        toast('已删除');
+      }
       navigate('/contacts');
     };
   }

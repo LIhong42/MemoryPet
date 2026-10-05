@@ -2,6 +2,8 @@
 const { ipcMain, app, screen, Menu } = require('electron');
 const db = require('./db');
 const { fmtDateTime, computeNextFireEvent } = require('./time_util');
+const { validateLunar } = require('./lunar');
+const { listFestivals, festivalLabel } = require('./festivals');
 
 // Resolve the name to persist. Accepts legacy first_name/last_name for one
 // release cycle so older renderer builds still work after the schema upgrade;
@@ -63,10 +65,23 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
   });
 
   ipcMain.handle('contacts:delete', (_e, id) => {
-    db.run('UPDATE contacts SET listed = 0, updated_at = ? WHERE id = ?',
-      [db.nowStr(), id]);
-    db.deleteSearch('contact', id);
-    return true;
+    // Hard-delete the contact and everything tied to it:
+    //   * contact_attributes (likes / taboos / gifts)        — via FK cascade
+    //   * important_dates                                    — via FK cascade
+    //   * events whose ONLY contact is this one              — manual delete
+    //   * search_index rows (contact / event / important_date) — manual
+    //   * reminder_acks for those events/dates               — manual
+    //   * live reminder queue entries                        — manual
+    //
+    // The "only contact" check is forward-compatible with a future
+    // event_contacts many-to-many table — see db.deleteContactCascade.
+    //
+    // `queue` is passed in so the helper can prune active reminders without
+    // reaching across modules. `updatePetState` is called afterwards so the
+    // pet window's idle/active state reflects the (now smaller) queue.
+    const result = db.deleteContactCascade(id, queue);
+    updatePetState({ queue, setPetState, setActiveReminder });
+    return result;
   });
 
   // ---- Contact attributes (likes / taboos / gifts — global table) ----
@@ -139,6 +154,74 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
     return true;
   });
 
+  // Bulk-delete a set of contact_attributes rows in one round-trip.
+  // Returns the number of rows actually deleted. Each affected contact's
+  // search_index entry is rebuilt once (after the deletes) instead of once
+  // per row, which matters when the renderer is wiping a filtered list of
+  // dozens of items from the same contact.
+  //
+  // The renderer collects ids from the current filtered view and passes
+  // them here. We deliberately trust the renderer: ids come from the same
+  // DB read the renderer just made, so passing them back is round-trip safe.
+  ipcMain.handle('attributes:delete_many', (_e, ids) => {
+    if (!Array.isArray(ids) || ids.length === 0) return { deleted: 0 };
+    // Validate / normalize input. Anything non-string is dropped before it
+    // touches SQL — defence in depth against accidental array-shape bugs.
+    const safeIds = ids.filter((x) => typeof x === 'string' && x.length > 0);
+    if (safeIds.length === 0) return { deleted: 0 };
+
+    const placeholders = safeIds.map(() => '?').join(',');
+    // Capture affected contact_ids BEFORE deleting so we can rebuild the
+    // search index for each affected contact exactly once.
+    const affectedContactIds = Array.from(new Set(
+      db.all(
+        `SELECT DISTINCT contact_id FROM contact_attributes WHERE id IN (${placeholders})`,
+        safeIds
+      ).map((r) => r.contact_id).filter(Boolean)
+    ));
+    db.run(
+      `DELETE FROM contact_attributes WHERE id IN (${placeholders})`,
+      safeIds
+    );
+    for (const cid of affectedContactIds) {
+      const c = db.parseContactRow(db.one('SELECT * FROM contacts WHERE id = ?', [cid]));
+      if (c) db.upsertSearch('contact', c.id, db.buildContactBody(c));
+    }
+    return { deleted: safeIds.length };
+  });
+
+  // Bulk-delete a set of events in one round-trip. Mirrors
+  // attributes:delete_many — ids are trusted (round-trip from the same
+  // DB read), search_index + reminder_acks + live reminder queue are all
+  // pruned in bulk instead of one round-trip per row.
+  ipcMain.handle('events:delete_many', (_e, ids) => {
+    if (!Array.isArray(ids) || ids.length === 0) return { deleted: 0 };
+    const safeIds = ids.filter((x) => typeof x === 'string' && x.length > 0);
+    if (safeIds.length === 0) return { deleted: 0 };
+
+    const placeholders = safeIds.map(() => '?').join(',');
+    // Wipe per-event side-tables BEFORE deleting the events themselves so
+    // a crash mid-flight doesn't leave dangling search/ack rows.
+    db.run(
+      `DELETE FROM search_index WHERE kind = 'event' AND ref_id IN (${placeholders})`,
+      safeIds
+    );
+    db.run(
+      `DELETE FROM reminder_acks WHERE source = 'event' AND source_id IN (${placeholders})`,
+      safeIds
+    );
+    if (queue && typeof queue.remove === 'function') {
+      for (const id of safeIds) queue.remove('event', id);
+    }
+    db.run(`DELETE FROM events WHERE id IN (${placeholders})`, safeIds);
+
+    // Pet state may have changed (queue is shorter) — push the updated
+    // state to the renderer so the pet icon doesn't keep an idle "REMINDER"
+    // glow after the queue empties.
+    updatePetState({ queue, setPetState, setActiveReminder });
+    return { deleted: safeIds.length };
+  });
+
   // ---- Important dates ----
   ipcMain.handle('important_dates:list', (_e, contact_id) =>
     db.all('SELECT * FROM important_dates WHERE contact_id = ? ORDER BY month, day', [contact_id]));
@@ -177,12 +260,33 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
   });
 
   // ---- Events ----
+  // Categories: 'general' (the default "提醒日期" page), 'memorial' (回忆事件),
+  // 'work' (工作事件). Filtering by category is optional — without it the
+  // handler returns all categories (used by contact_detail and search).
+  const EVENT_CATEGORIES = new Set(['general', 'memorial', 'work']);
+
   ipcMain.handle('events:list', (_e, opts = {}) => {
     let sql = 'SELECT * FROM events WHERE 1=1';
     const args = [];
     if (opts.contact_id) { sql += ' AND contact_id = ?'; args.push(opts.contact_id); }
     if (opts.from) { sql += ' AND (next_fire_at IS NULL OR next_fire_at >= ?)'; args.push(opts.from); }
     if (opts.to) { sql += ' AND (next_fire_at IS NULL OR next_fire_at <= ?)'; args.push(opts.to); }
+    if (opts.category && EVENT_CATEGORIES.has(opts.category)) {
+      sql += ' AND category = ?'; args.push(opts.category);
+    }
+    // tag_kind filter (used by 提醒日期 list filters):
+    //   - 'birthday' / 'anniversary' / 'festival' — match that exact value
+    //   - 'none' — only events without a tag_kind (user-created untagged)
+    //   - 'any_tagged' — anything where tag_kind IS NOT NULL
+    //   - absent/empty — no filter
+    if (opts.tag_kind === 'none') {
+      sql += ' AND tag_kind IS NULL';
+    } else if (opts.tag_kind === 'any_tagged') {
+      sql += ' AND tag_kind IS NOT NULL';
+    } else if (opts.tag_kind && EVENT_TAG_KINDS.has(opts.tag_kind)) {
+      sql += ' AND tag_kind = ?';
+      args.push(opts.tag_kind);
+    }
     sql += ' ORDER BY COALESCE(next_fire_at, remind_date, created_at) ASC';
     return db.all(sql, args);
   });
@@ -206,49 +310,125 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
   ipcMain.handle('events:get', (_e, id) =>
     db.one('SELECT * FROM events WHERE id = ?', [id]));
 
+  // Tag kinds: 'birthday' / 'anniversary' / 'festival' — or null/empty for
+  // untyped events. Determines whether the title is a free-text label
+  // (生日 / 纪念日) or a built-in festival code (节日).
+  const EVENT_TAG_KINDS = new Set(['birthday', 'anniversary', 'festival']);
+  const FESTIVAL_CODES = new Set(listFestivals().map((f) => f.code));
+
+  ipcMain.handle('events:list_festivals', () => listFestivals());
+
   ipcMain.handle('events:create', (_e, input) => {
     const id = db.newId();
     const now = db.nowStr();
+    // Category defaults to 'general'; reject unknown values so a typo can't
+    // hide an event from every page.
+    const category = EVENT_CATEGORIES.has(input.category) ? input.category : 'general';
+    // Tag kind is no longer settable from the new-event form. The renderer
+    // never sends it. We accept it from internal callers (festival auto-
+    // create) but never from the form.
+    let tagKind = null;
+    if (input.tag_kind && EVENT_TAG_KINDS.has(input.tag_kind)) {
+      tagKind = input.tag_kind;
+      if (tagKind === 'festival' && !FESTIVAL_CODES.has(input.title)) {
+        throw new Error('节日类型必须选择内置节日');
+      }
+    }
+    // Title is no longer required from the user — auto-fill from contact name
+    // or a generic placeholder so the row always has a non-empty display
+    // label.
+    let title = (typeof input.title === 'string' ? input.title.trim() : '');
+    if (!title) {
+      if (input.contact_id) {
+        const c = db.one('SELECT name FROM contacts WHERE id = ?', [input.contact_id]);
+        if (c && c.name) {
+          title = `${c.name}的提醒`;
+        }
+      }
+      if (!title) title = '新建提醒';
+    }
+    // Lunar fields are accepted only when both are present; reject invalid
+    // (month, day) pairs up front so the user gets immediate feedback.
+    let lunarMonth = null, lunarDay = null;
+    if (input.lunar_month != null && input.lunar_day != null) {
+      const v = validateLunar(input.lunar_month, input.lunar_day);
+      if (!v.ok) throw new Error(v.reason || '农历日期无效');
+      lunarMonth = Number(input.lunar_month);
+      lunarDay = Number(input.lunar_day);
+    }
     const nf = computeNextFireEvent({
       ...input,
+      title,
       remind: !!input.remind,
       active: true,
       next_fire_at: null,
       last_fired_at: null,
+      lunar_month: lunarMonth,
+      lunar_day: lunarDay,
     }, new Date());
     db.run(
       `INSERT INTO events(id, contact_id, title, description, remind, remind_kind,
                           remind_time, remind_date, next_fire_at, last_fired_at, active,
+                          category, tag_kind, lunar_month, lunar_day,
                           created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1, ?, ?)`,
-      [id, input.contact_id || null, input.title, input.description || null,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1,
+               ?, ?, ?, ?, ?, ?)`,
+      [id, input.contact_id || null, title, input.description || null,
        input.remind ? 1 : 0, input.remind_kind || 'none',
        input.remind_time || '09:00', input.remind_date || null,
-       nf ? fmtDateTime(nf) : null, now, now]
+       nf ? fmtDateTime(nf) : null,
+       category, tagKind, lunarMonth, lunarDay, now, now]
     );
-    db.upsertSearch('event', id, `${input.title} ${input.description || ''} ${input.remind_kind || ''}`);
+    db.upsertSearch('event', id, `${title} ${input.description || ''} ${input.remind_kind || ''} ${category} ${tagKind || ''}`);
     return db.one('SELECT * FROM events WHERE id = ?', [id]);
   });
 
   ipcMain.handle('events:update', (_e, id, input) => {
     const now = db.nowStr();
+    const category = EVENT_CATEGORIES.has(input.category) ? input.category : 'general';
+    let tagKind = null;
+    if (input.tag_kind && EVENT_TAG_KINDS.has(input.tag_kind)) {
+      tagKind = input.tag_kind;
+      if (tagKind === 'festival' && !FESTIVAL_CODES.has(input.title)) {
+        throw new Error('节日类型必须选择内置节日');
+      }
+    }
+    // Title may not be cleared by the user. If the form sends an empty
+    // string, fall back to the existing row's title.
+    let title = (typeof input.title === 'string' ? input.title.trim() : '');
+    if (!title) {
+      const existing = db.one('SELECT title FROM events WHERE id = ?', [id]);
+      title = (existing && existing.title) || '新建提醒';
+    }
+    let lunarMonth = null, lunarDay = null;
+    if (input.lunar_month != null && input.lunar_day != null) {
+      const v = validateLunar(input.lunar_month, input.lunar_day);
+      if (!v.ok) throw new Error(v.reason || '农历日期无效');
+      lunarMonth = Number(input.lunar_month);
+      lunarDay = Number(input.lunar_day);
+    }
     const nf = computeNextFireEvent({
       ...input,
+      title,
       remind: !!input.remind,
       active: true,
       next_fire_at: null,
       last_fired_at: null,
+      lunar_month: lunarMonth,
+      lunar_day: lunarDay,
     }, new Date());
     db.run(
       `UPDATE events SET contact_id=?, title=?, description=?, remind=?, remind_kind=?,
-                         remind_time=?, remind_date=?, next_fire_at=?, active=1, updated_at=?
+                         remind_time=?, remind_date=?, next_fire_at=?, active=1,
+                         category=?, tag_kind=?, lunar_month=?, lunar_day=?, updated_at=?
        WHERE id=?`,
-      [input.contact_id || null, input.title, input.description || null,
+      [input.contact_id || null, title, input.description || null,
        input.remind ? 1 : 0, input.remind_kind || 'none',
        input.remind_time || '09:00', input.remind_date || null,
-       nf ? fmtDateTime(nf) : null, now, id]
+       nf ? fmtDateTime(nf) : null,
+       category, tagKind, lunarMonth, lunarDay, now, id]
     );
-    db.upsertSearch('event', id, `${input.title} ${input.description || ''} ${input.remind_kind || ''}`);
+    db.upsertSearch('event', id, `${title} ${input.description || ''} ${input.remind_kind || ''} ${category} ${tagKind || ''}`);
     return db.one('SELECT * FROM events WHERE id = ?', [id]);
   });
 

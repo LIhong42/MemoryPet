@@ -1,6 +1,10 @@
 // src/js/pages/contact_detail.js — view a single contact + their dates + events
 import { api, escapeHtml, displayName, fmtDate, fmtDateTime, toast } from '../api.js';
 import { register, navigate } from '../router.js';
+import {
+  bulkEnterLinkHtml, bulkToolbarHtml,
+  wireBulkEnter, wireBulkToolbar,
+} from '../bulk_delete.js';
 
 // --- List section with search + event filter + pagination -----------------
 //
@@ -156,11 +160,21 @@ function renderListSection(title, items, state, kind, c) {
   const visible = ordered.slice(start, start + PAGE_SIZE);
 
   const filtersActive = !!(q || state.eventFilter);
+  const selectActive = !!state.selectModeActive;
   // When a row is being inline-edited, render the edit form in place of its
-  // normal row. All other rows render as before.
+  // normal row. All other rows render as before. In bulk-select mode we
+  // additionally prefix each row with a checkbox.
   const rowsHtml = visible.map((it) => {
-    if (state.editingId === it.id) return renderEditRow(it);
-    return renderItemRow(it);
+    const inner = state.editingId === it.id ? renderEditRow(it) : renderItemRow(it);
+    if (selectActive) {
+      return `
+        <div class="row" style="gap:10px; padding:6px 0;">
+          <input type="checkbox" class="section-bulk-check" data-kind="${escapeHtml(kind)}" data-id="${escapeHtml(it.id)}" ${state.selected.has(it.id) ? 'checked' : ''}/>
+          <div style="flex:1; min-width:0;">${inner}</div>
+        </div>
+      `;
+    }
+    return inner;
   }).join('');
   const listHtml = visible.length
     ? `<div class="card">${rowsHtml}</div>`
@@ -179,23 +193,37 @@ function renderListSection(title, items, state, kind, c) {
       ${opts.map((o) => `<option value="${escapeHtml(o.value)}" ${o.value === state.eventFilter ? 'selected' : ''}>${escapeHtml(o.label)}</option>`).join('')}
     </select>
   `;
-  const editLink = c
+  // In idle mode the right side of the header carries a "管理 →" link
+  // (per-section manage page) PLUS a "批量删除" link when there's at least
+  // one row to pick from. In select mode the header just shows the count
+  // badge — the toolbar below takes over the action area.
+  const editLink = c && !selectActive
     ? `<a class="inline-link section-manage" href="#/contacts/${escapeHtml(c.id)}/${escapeHtml(kindMap[kind])}">管理 →</a>`
+    : '';
+  const enterBulkLink = (!selectActive && ordered.length > 0 && c)
+    ? bulkEnterLinkHtml().replace('data-bulk-enter', `data-bulk-enter data-kind="${escapeHtml(kind)}"`)
     : '';
 
   const matchFooter = filtersActive
     ? `<div class="meta" style="padding:6px 0">匹配 ${ordered.length} 条${q ? ' · 关键词：' + escapeHtml(state.query) : ''}${state.eventFilter ? ' · 事件：' + escapeHtml(state.eventFilter === '__none__' ? '未填事件' : state.eventFilter) : ''}</div>`
     : '';
 
+  const toolbarHtml = selectActive ? bulkToolbarHtml({
+    count: state.selected.size,
+    total: ordered.length,
+    kindLabel: '条' + title,
+  }) : '';
+
   return `
     <div class="section-header">
-      <h2>${title} ${countBadge}</h2>
+      <h2>${title} ${countBadge} ${enterBulkLink}</h2>
       ${editLink}
     </div>
     <div class="filter-row">
       ${searchInput}
       ${eventFilterHtml}
     </div>
+    ${toolbarHtml}
     ${listHtml}
     ${matchFooter}
     ${renderPager(state, totalPages)}
@@ -223,10 +251,17 @@ async function render(args) {
 
   // Per-section UI state. Owned by this render() invocation; the inputs
   // and pager buttons read/mutate this directly via closures.
+  //
+  // selectModeActive + selected drive the bulk-delete UI. `selected` is a
+  // Set<id> so toggling a checkbox is O(1) and the count shown in the
+  // toolbar is always in sync.
   const sectionState = {
-    like:  { kind: 'like',  query: '', eventFilter: '', page: 0, editingId: null },
-    taboo: { kind: 'taboo', query: '', eventFilter: '', page: 0, editingId: null },
-    gift:  { kind: 'gift',  query: '', eventFilter: '', page: 0, editingId: null },
+    like:  { kind: 'like',  query: '', eventFilter: '', page: 0, editingId: null,
+             selectModeActive: false, selected: new Set() },
+    taboo: { kind: 'taboo', query: '', eventFilter: '', page: 0, editingId: null,
+             selectModeActive: false, selected: new Set() },
+    gift:  { kind: 'gift',  query: '', eventFilter: '', page: 0, editingId: null,
+             selectModeActive: false, selected: new Set() },
   };
 
   // Refresh a single kind's items from the API and re-render only that
@@ -331,6 +366,68 @@ async function render(args) {
         rerenderSections();
       };
     });
+    // Bulk-select wiring (per-kind). Activated by the "批量删除" link in
+    // the section header; toggled off by the toolbar's "退出选择" button.
+    // We use a local Set state.selected, mutated by checkbox flips and
+    // cleared on exit / delete-confirmed.
+    const enterLink = document.querySelector(`.list-host[data-kind="${kind}"] [data-bulk-enter][data-kind="${kind}"]`);
+    if (enterLink) {
+      enterLink.onclick = (e) => {
+        e.preventDefault();
+        sectionState[kind].selectModeActive = true;
+        sectionState[kind].selected = new Set();
+        rerenderSections();
+      };
+    }
+    if (sectionState[kind].selectModeActive) {
+      const host = document.querySelector(`.list-host[data-kind="${kind}"]`);
+      // Per-row checkbox flips — keep the Set in sync, then refresh the
+      // toolbar count without rebuilding the whole list (which would
+      // steal the user's focus).
+      host.querySelectorAll('.section-bulk-check').forEach((cb) => {
+        cb.onchange = () => {
+          const id = cb.dataset.id;
+          if (!id) return;
+          if (cb.checked) sectionState[kind].selected.add(id);
+          else sectionState[kind].selected.delete(id);
+          const t = host.querySelector('[data-bulk-toolbar]');
+          if (!t) return;
+          // Compute the visible filtered count for the toolbar's "total"
+          // — matches what the user sees on this page right now.
+          const all = itemsByKind[kind] || [];
+          const qq = sectionState[kind].query.trim().toLowerCase();
+          const ef = sectionState[kind].eventFilter;
+          const total = all.filter((it) => matchesEither(it, qq, ef)).length;
+          t.outerHTML = bulkToolbarHtml({
+            count: sectionState[kind].selected.size,
+            total,
+            kindLabel: '条' + kindTitle[kind],
+          });
+          wireBulkToolbar(host, sectionState[kind], {
+            kindLabel: '条' + kindTitle[kind],
+            onDelete: handlers.onDelete,
+            onExit: handlers.onExit,
+          });
+        };
+      });
+      const handlers = {
+        kindLabel: '条' + kindTitle[kind],
+        onDelete: async (ids) => {
+          const result = await api.attributes.deleteMany(ids);
+          sectionState[kind].selectModeActive = false;
+          sectionState[kind].selected = new Set();
+          toast(`已删除 ${result.deleted} 条${kindTitle[kind]}`);
+          await refreshKind(kind);
+          return result;
+        },
+        onExit: () => {
+          sectionState[kind].selectModeActive = false;
+          sectionState[kind].selected = new Set();
+          rerenderSections();
+        },
+      };
+      wireBulkToolbar(host, sectionState[kind], handlers);
+    }
   }
 
   app.innerHTML = `

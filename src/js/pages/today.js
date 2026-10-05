@@ -56,8 +56,8 @@ export async function render() {
       ? `<div class="empty">今天没有事件</div>`
       : events.map((e) => `
         <div class="card clickable" data-id="${escapeHtml(e.id)}">
-          <div><strong>${escapeHtml(e.title)}</strong></div>
-          <div class="meta">${fmtDateTime(e.next_fire_at || e.remind_date)} · ${kindLabel(e.remind_kind)}${e.contact_id && cById[e.contact_id] ? ' · ' + escapeHtml(displayName(cById[e.contact_id])) : ''}</div>
+          <div><strong>${escapeHtml(e.title)}</strong> <span class="tag">${escapeHtml(categoryTagLabel(e.category))}</span>${e.tag_kind ? ` <span class="tag">${tagKindLabel(e.tag_kind)}</span>` : ''}</div>
+          <div class="meta">${fmtDateTime(e.next_fire_at || e.remind_date)} · ${kindLabel(e.remind_kind)}${e.lunar_month && e.lunar_day ? ' · 农历 ' + e.lunar_month + '月' + e.lunar_day + '日' : ''}${e.contact_id && cById[e.contact_id] ? ' · ' + escapeHtml(displayName(cById[e.contact_id])) : ''}</div>
         </div>
       `).join('')}
   `;
@@ -77,6 +77,14 @@ export async function render() {
 
 function kindLabel(k) {
   return ({ one_time: '一次', daily: '每天', monthly: '每月', yearly: '每年', none: '不提醒' }[k]) || k || '';
+}
+
+function categoryTagLabel(c) {
+  return ({ general: '提醒', memorial: '回忆', work: '工作' }[c]) || c || '';
+}
+
+function tagKindLabel(k) {
+  return ({ birthday: '生日', anniversary: '纪念日', festival: '节日' }[k]) || '';
 }
 
 register('/today', render);
