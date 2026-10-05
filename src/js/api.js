@@ -37,6 +37,20 @@ export const api = {
     debugFireDueNow: () => M.events.debugFireDueNow(),
     listFestivals: () => M.events.listFestivals(),
   },
+  memorialEvents: {
+    list:   (opts)      => M.memorialEvents.list(opts || {}),
+    get:    (id)        => M.memorialEvents.get(id),
+    create: (input)     => M.memorialEvents.create(input),
+    update: (id, input) => M.memorialEvents.update(id, input),
+    delete: (id)        => M.memorialEvents.delete(id),
+    deleteMany: (ids)   => M.memorialEvents.deleteMany(ids),
+    photos: {
+      list:   (eventId)         => M.memorialEvents.photos.list(eventId),
+      upload: (eventId, payload)=> M.memorialEvents.photos.upload(eventId, payload),
+      delete: (photoId)         => M.memorialEvents.photos.delete(photoId),
+      read:   (photoId)         => M.memorialEvents.photos.read(photoId),
+    },
+  },
   reminders: {
     listActive: () => M.reminders.listActive(),
     markDone: (source, id) => M.reminders.markDone(source, id),
@@ -117,4 +131,74 @@ export function firstChar(s) {
 // `name` field.
 export function displayName(c) {
   return (c && typeof c.name === 'string' && c.name.trim()) || '(无名)';
+}
+
+// Photo display. Earlier versions exposed a custom `memorial-photo://`
+// scheme handled by main.js, but `default-src 'self'` in index.html CSP
+// blocks <img src=…> from loading any non-self protocol — the browser shows
+// a broken-image icon even though the protocol handler returns 200. The fix
+// is to embed photos as data URLs (base64). They bypass the CSP entirely
+// and the browser caches the decoded bitmap on subsequent renders.
+//
+// `photoDataUrlCache` is a module-level Map<photoId, dataUrl>. The first
+// lookup of a given photo IPCs to main and stores the result; subsequent
+// lookups are synchronous. Callers can pass through `memorialPhotoUrl()` —
+// when given a relative_path it returns the data URL synchronously when
+// already cached, otherwise it returns '' and kicks off a background fetch
+// that resolves into the cache. The list-page <img> tags render with the
+// blank alt attribute until the second tick when the cache populates; the
+// lightbox pre-warms entries on open.
+const photoDataUrlCache = new Map();
+const photoFetchInflight = new Map();
+
+export function getCachedPhotoDataUrl(photoId) {
+  return photoDataUrlCache.get(photoId) || '';
+}
+
+// Resolve a photoId to a data URL, calling the IPC once and caching. Returns
+// a Promise<string>. Callers usually don't await this — they fire-and-forget
+// to warm the cache for the next render.
+export async function fetchPhotoDataUrl(photoId) {
+  if (!photoId) return '';
+  if (photoDataUrlCache.has(photoId)) return photoDataUrlCache.get(photoId);
+  if (photoFetchInflight.has(photoId)) return photoFetchInflight.get(photoId);
+  const p = (async () => {
+    try {
+      const r = await api.memorialEvents.photos.read(photoId);
+      const url = (r && r.data_url) || '';
+      if (url) photoDataUrlCache.set(photoId, url);
+      return url;
+    } catch (e) {
+      console.error('fetchPhotoDataUrl failed for', photoId, e);
+      return '';
+    } finally {
+      photoFetchInflight.delete(photoId);
+    }
+  })();
+  photoFetchInflight.set(photoId, p);
+  return p;
+}
+
+// Drop the cached entry for a photo — call after a delete so the renderer
+// doesn't keep showing the now-stale bytes.
+export function invalidatePhotoDataUrl(photoId) {
+  if (!photoId) return;
+  photoDataUrlCache.delete(photoId);
+  photoFetchInflight.delete(photoId);
+}
+
+// Legacy shape compatibility — the row helper `listMemorialEvents` /
+// `getMemorialEvent` returns each photo as `{ id, relative_path, ... }`.
+// Earlier renderer code passed `relative_path` into `memorialPhotoUrl()`
+// and used the result in an <img src=…>. We keep the same function name so
+// callers don't need to be rewritten, but the argument is now a photo id
+// (we map it through the cache). Any non-id input returns '' and is ignored.
+export function memorialPhotoUrl(photoIdOrPath) {
+  if (!photoIdOrPath) return '';
+  if (photoDataUrlCache.has(photoIdOrPath)) return photoDataUrlCache.get(photoIdOrPath);
+  // Trigger a background fetch — the <img> tag will repaint on the next
+  // tick once the cache resolves. Callers that need a guaranteed-ready URL
+  // should call fetchPhotoDataUrl() and `await` it.
+  fetchPhotoDataUrl(photoIdOrPath);
+  return '';
 }

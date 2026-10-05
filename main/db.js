@@ -93,6 +93,48 @@ CREATE TABLE IF NOT EXISTS search_index (
   body   TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_search_kind_ref ON search_index(kind, ref_id);
+
+-- Memorial events: independent from the reminder events table. They record
+-- "what happened, when, with whom" instead of "when to fire a reminder".
+-- No remind/remind_kind/lunar_*/next_fire_at fields — the scheduler never
+-- reads this table. See the migration in migrateMemorialEventsV1 for the
+-- runtime CREATE statements that run alongside the schema above.
+CREATE TABLE IF NOT EXISTS memorial_events (
+  id          TEXT PRIMARY KEY,
+  kind        TEXT NOT NULL DEFAULT 'other' CHECK (kind IN ('first_time','other')),
+  title       TEXT NOT NULL,
+  -- The five user-facing fields that replace the legacy single description
+  -- text column. All nullable; the form lets the user skip any of them.
+  place       TEXT,
+  food        TEXT,
+  outfit      TEXT,
+  activities  TEXT,
+  notes       TEXT,
+  occurred_at TEXT NOT NULL,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_memorial_events_occurred_at ON memorial_events(occurred_at);
+CREATE INDEX IF NOT EXISTS idx_memorial_events_kind        ON memorial_events(kind);
+
+CREATE TABLE IF NOT EXISTS memorial_event_contacts (
+  memorial_event_id TEXT NOT NULL REFERENCES memorial_events(id) ON DELETE CASCADE,
+  contact_id        TEXT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  created_at        TEXT NOT NULL,
+  PRIMARY KEY (memorial_event_id, contact_id)
+);
+CREATE INDEX IF NOT EXISTS idx_mec_contact ON memorial_event_contacts(contact_id);
+
+CREATE TABLE IF NOT EXISTS memorial_event_photos (
+  id                TEXT PRIMARY KEY,
+  memorial_event_id TEXT NOT NULL REFERENCES memorial_events(id) ON DELETE CASCADE,
+  relative_path     TEXT NOT NULL,
+  original_name     TEXT,
+  mime              TEXT,
+  size_bytes        INTEGER,
+  created_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mep_event ON memorial_event_photos(memorial_event_id);
 `;
 
 let db = null;
@@ -139,6 +181,8 @@ async function open(dbPathArg) {
   migrateEventsCategoryV1();
   migrateEventsTagKindV1();
   migrateEventsContactCascadeV1();
+  migrateMemorialEventsV1();
+  migrateMemorialEventsV2();
   seedDefaultFestivals();
 
   // Settings defaults
@@ -711,6 +755,223 @@ function migrateEventsContactCascadeV1() {
   }
 }
 
+// ---- memorial events v1 migration ----
+// SCHEMA already declares the three tables (memorial_events, the join table
+// memorial_event_contacts, and the photo metadata table memorial_event_photos)
+// so a fresh DB never needs to ALTER anything. We keep a migration function
+// anyway so older DBs that pre-date these tables get them created in one
+// idempotent sweep, guarded by a settings key.
+//
+// We DO NOT auto-migrate existing events rows with category='memorial': the
+// user may have relied on remind_kind=yearly / next_fire_at scheduling on
+// them. We log a count so the developer sees the legacy footprint on first
+// run; the rows are filtered out by ipc.js (events:list) and the renderer
+// has no path to surface them.
+const MEMORIAL_EVENTS_V1_KEY = 'memorial_events_v1_applied';
+
+function migrateMemorialEventsV1() {
+  if (!db) return;
+  if (getSetting(MEMORIAL_EVENTS_V1_KEY) === '1') return;
+  try {
+    db.run(`CREATE TABLE IF NOT EXISTS memorial_events (
+      id          TEXT PRIMARY KEY,
+      kind        TEXT NOT NULL DEFAULT 'other' CHECK (kind IN ('first_time','other')),
+      title       TEXT NOT NULL,
+      place       TEXT,
+      food        TEXT,
+      outfit      TEXT,
+      activities  TEXT,
+      notes       TEXT,
+      occurred_at TEXT NOT NULL,
+      created_at  TEXT NOT NULL,
+      updated_at  TEXT NOT NULL
+    )`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_memorial_events_occurred_at ON memorial_events(occurred_at)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_memorial_events_kind        ON memorial_events(kind)`);
+    db.run(`CREATE TABLE IF NOT EXISTS memorial_event_contacts (
+      memorial_event_id TEXT NOT NULL REFERENCES memorial_events(id) ON DELETE CASCADE,
+      contact_id        TEXT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+      created_at        TEXT NOT NULL,
+      PRIMARY KEY (memorial_event_id, contact_id)
+    )`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_mec_contact ON memorial_event_contacts(contact_id)`);
+    db.run(`CREATE TABLE IF NOT EXISTS memorial_event_photos (
+      id                TEXT PRIMARY KEY,
+      memorial_event_id TEXT NOT NULL REFERENCES memorial_events(id) ON DELETE CASCADE,
+      relative_path     TEXT NOT NULL,
+      original_name     TEXT,
+      mime              TEXT,
+      size_bytes        INTEGER,
+      created_at        TEXT NOT NULL
+    )`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_mep_event ON memorial_event_photos(memorial_event_id)`);
+    setSetting(MEMORIAL_EVENTS_V1_KEY, '1');
+  } catch (e) {
+    console.error('memorial_events v1 migration failed:', e);
+    return;
+  }
+  try {
+    const legacy = all("SELECT COUNT(*) AS n FROM events WHERE category = 'memorial'");
+    const n = (legacy[0] && legacy[0].n) || 0;
+    if (n > 0) {
+      console.log(`[memorial migration] ${n} legacy events with category='memorial' present; hidden from list.`);
+    }
+  } catch {}
+}
+
+// ---- memorial events v2 migration ----
+// Splits the legacy single `description TEXT` column into 5 user-facing
+// fields (place / food / outfit / activities / notes). The old description
+// is copied wholesale into `notes`; the other four stay NULL so the user
+// can revisit each event and reclassify it later if they want.
+//
+// Uses the standard SQLITE table-rebuild pattern (PRAGMA-OFF / BEGIN /
+// CREATE TABLE _new / INSERT…SELECT / DROP / RENAME / COMMIT) modelled on
+// `migrateEventsContactCascadeV1` above. Guard key
+// `memorial_events_v2_applied` so the migration runs exactly once per DB.
+//
+// The `description` column goes away in the new shape — any code path that
+// still reads it (none in this repo) would see a SQL error, which is the
+// intended loud failure.
+const MEMORIAL_EVENTS_V2_KEY = 'memorial_events_v2_applied';
+
+function migrateMemorialEventsV2() {
+  if (!db) return;
+  if (getSetting(MEMORIAL_EVENTS_V2_KEY) === '1') return;
+
+  try {
+    db.run('PRAGMA foreign_keys = OFF');
+    db.run('BEGIN');
+    db.run(`
+      CREATE TABLE memorial_events_new (
+        id          TEXT PRIMARY KEY,
+        kind        TEXT NOT NULL DEFAULT 'other' CHECK (kind IN ('first_time','other')),
+        title       TEXT NOT NULL,
+        place       TEXT,
+        food        TEXT,
+        outfit      TEXT,
+        activities  TEXT,
+        notes       TEXT,
+        occurred_at TEXT NOT NULL,
+        created_at  TEXT NOT NULL,
+        updated_at  TEXT NOT NULL
+      )
+    `);
+    // Move the legacy description into `notes`. NULL for the other four
+    // new fields — the user can re-categorize on next edit if they want.
+    db.run(
+      `INSERT INTO memorial_events_new
+         (id, kind, title, place, food, outfit, activities, notes,
+          occurred_at, created_at, updated_at)
+       SELECT id, kind, title, NULL, NULL, NULL, NULL, description,
+              occurred_at, created_at, updated_at
+         FROM memorial_events`
+    );
+    db.run('DROP TABLE memorial_events');
+    db.run('ALTER TABLE memorial_events_new RENAME TO memorial_events');
+    db.run('CREATE INDEX IF NOT EXISTS idx_memorial_events_occurred_at ON memorial_events(occurred_at)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_memorial_events_kind        ON memorial_events(kind)');
+    db.run('COMMIT');
+    setSetting(MEMORIAL_EVENTS_V2_KEY, '1');
+    markDirty();
+    console.log('[memorial v2 migration] description split into 5 fields; old description → notes.');
+  } catch (e) {
+    try { db.run('ROLLBACK'); } catch {}
+    console.error('memorial_events v2 migration failed:', e);
+  } finally {
+    try { db.run('PRAGMA foreign_keys = ON'); } catch {}
+  }
+}
+
+// ---- memorial event queries ----
+// Each returned row is decorated with:
+//   - contact_ids[]: ordered list of associated contact ids
+//   - contact_names[]: matching display names (ordered)
+//   - photo_count: number of attached photos
+//   - first_photo_id + first_photo_relative_path: id and path of the
+//     earliest uploaded photo. The renderer uses the id to load the bytes
+//     via `memorial_events:photo_read` (CSP-safe data URL).
+function listMemorialEvents(opts = {}) {
+  let sql = `SELECT me.*,
+                    (SELECT COUNT(*) FROM memorial_event_photos p WHERE p.memorial_event_id = me.id) AS photo_count,
+                    (SELECT p.id
+                       FROM memorial_event_photos p
+                      WHERE p.memorial_event_id = me.id
+                      ORDER BY p.created_at ASC LIMIT 1) AS first_photo_id,
+                    (SELECT p.relative_path
+                       FROM memorial_event_photos p
+                      WHERE p.memorial_event_id = me.id
+                      ORDER BY p.created_at ASC LIMIT 1) AS first_photo_relative_path
+               FROM memorial_events me
+              WHERE 1=1`;
+  const args = [];
+  if (opts.kind === 'first_time' || opts.kind === 'other') {
+    sql += ' AND me.kind = ?';
+    args.push(opts.kind);
+  }
+  if (opts.contact_id) {
+    sql += ' AND EXISTS (SELECT 1 FROM memorial_event_contacts mc WHERE mc.memorial_event_id = me.id AND mc.contact_id = ?)';
+    args.push(opts.contact_id);
+  }
+  sql += ' ORDER BY me.occurred_at DESC, me.created_at DESC';
+  const rows = all(sql, args);
+  for (const r of rows) {
+    const links = all(
+      `SELECT mc.contact_id, c.name
+         FROM memorial_event_contacts mc
+         JOIN contacts c ON c.id = mc.contact_id
+        WHERE mc.memorial_event_id = ?
+        ORDER BY c.name`,
+      [r.id]
+    );
+    r.contact_ids = links.map((l) => l.contact_id);
+    r.contact_names = links.map((l) => l.name);
+  }
+  return rows;
+}
+
+// Single-row fetch with full contact + photo detail. Returned shape matches
+// listMemorialEvents rows plus a `photos[]` array (only here; the list page
+// doesn't need the full photo list).
+function getMemorialEvent(id) {
+  const row = one('SELECT * FROM memorial_events WHERE id = ?', [id]);
+  if (!row) return null;
+  row.contact_ids = all(
+    `SELECT mc.contact_id
+       FROM memorial_event_contacts mc
+       JOIN contacts c ON c.id = mc.contact_id
+      WHERE mc.memorial_event_id = ?
+      ORDER BY c.name`,
+    [id]
+  ).map((r) => r.contact_id);
+  row.contact_names = all(
+    `SELECT c.name
+       FROM memorial_event_contacts mc
+       JOIN contacts c ON c.id = mc.contact_id
+      WHERE mc.memorial_event_id = ?
+      ORDER BY c.name`,
+    [id]
+  ).map((r) => r.name);
+  row.photos = all(
+    `SELECT id, relative_path, original_name, mime, size_bytes, created_at
+       FROM memorial_event_photos
+      WHERE memorial_event_id = ?
+      ORDER BY created_at ASC`,
+    [id]
+  );
+  return row;
+}
+
+function listPhotosForMemorialEvent(id) {
+  return all(
+    `SELECT id, relative_path, original_name, mime, size_bytes, created_at
+       FROM memorial_event_photos
+      WHERE memorial_event_id = ?
+      ORDER BY created_at ASC`,
+    [id]
+  );
+}
+
 // ---- default festival seed ----
 // On first run (or any DB that doesn't yet have built-in festival events),
 // insert one row per built-in festival with category='general',
@@ -820,6 +1081,7 @@ module.exports = {
   parseContactRow, buildContactBody, safeParseArray,
   listAttributes, getAttribute,
   deleteContactCascade,
+  listMemorialEvents, getMemorialEvent, listPhotosForMemorialEvent,
   // Exposed so ipc.js can call them (avoids duplicating logic in IPC handlers).
   // These wrap require() at call-time so we don't introduce a require cycle
   // between db.js and the helpers.

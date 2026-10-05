@@ -234,9 +234,10 @@ async function render(args) {
   const app = document.getElementById('app');
   app.innerHTML = `<div class="empty">载入中…</div>`;
   const c = await api.contacts.get(args.id);
-  const [dates, events, likes, taboos, gifts] = await Promise.all([
+  const [dates, events, memorial, likes, taboos, gifts] = await Promise.all([
     api.importantDates.list(args.id),
     api.events.list({ contact_id: args.id }),
+    api.memorialEvents.list({ contact_id: args.id }),
     api.attributes.list('like',  { contact_id: args.id }),
     api.attributes.list('taboo', { contact_id: args.id }),
     api.attributes.list('gift',  { contact_id: args.id }),
@@ -468,6 +469,23 @@ async function render(args) {
       `).join('')}
 
     <div class="section-header">
+      <h2>回忆事件</h2>
+      <button class="btn secondary" id="add-memorial">+ 新增</button>
+    </div>
+    ${memorial.length === 0
+      ? `<div class="empty">还没有回忆事件</div>`
+      : memorial.map((e) => `
+        <div class="card clickable" data-memorial="${escapeHtml(e.id)}">
+          <div class="row between">
+            <div>
+              <div><strong>${escapeHtml(e.title || '(无标题)')}</strong> <span class="tag">${escapeHtml(e.kind === 'first_time' ? '第一次' : '其他')}</span></div>
+              <div class="meta">发生：${escapeHtml(fmtDateTime(e.occurred_at))}${e.photo_count > 0 ? ` · ${e.photo_count} 张照片` : ''}</div>
+            </div>
+          </div>
+        </div>
+      `).join('')}
+
+    <div class="section-header">
       <h2>事件</h2>
       <button class="btn secondary" id="add-event">+ 新增</button>
     </div>
@@ -489,6 +507,8 @@ async function render(args) {
 
   document.getElementById('add-date').onclick = () => showDateDialog(args.id);
   document.getElementById('add-event').onclick = () => navigate('/events/new?contact_id=' + args.id);
+  const addMemorial = document.getElementById('add-memorial');
+  if (addMemorial) addMemorial.onclick = () => navigate('/events/new?category=memorial&contact_id=' + args.id);
   app.querySelectorAll('[data-del-date]').forEach((el) => {
     el.onclick = async () => {
       if (!confirm('删除该重要日期？')) return;
@@ -498,7 +518,13 @@ async function render(args) {
     };
   });
   app.querySelectorAll('.card.clickable').forEach((el) => {
-    el.onclick = () => navigate('/events/' + el.dataset.id);
+    el.onclick = () => {
+      if (el.dataset.memorial) {
+        navigate('/events/' + el.dataset.memorial + '?category=memorial');
+      } else if (el.dataset.id) {
+        navigate('/events/' + el.dataset.id);
+      }
+    };
   });
 }
 

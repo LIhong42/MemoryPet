@@ -1,5 +1,7 @@
 // main/ipc.js — register all ipcMain handlers (sql.js-friendly)
 const { ipcMain, app, screen, Menu } = require('electron');
+const path = require('path');
+const fs = require('fs');
 const db = require('./db');
 const { fmtDateTime, computeNextFireEvent } = require('./time_util');
 const { validateLunar } = require('./lunar');
@@ -266,6 +268,11 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
   const EVENT_CATEGORIES = new Set(['general', 'memorial', 'work']);
 
   ipcMain.handle('events:list', (_e, opts = {}) => {
+    // Memorial events live in their own table now (see memorial_events:*).
+    // The legacy `events` table no longer carries category='memorial' rows;
+    // short-circuit so any stale call returns an empty list instead of
+    // surfacing reminder state for events the UI has retired.
+    if (opts.category === 'memorial') return [];
     let sql = 'SELECT * FROM events WHERE 1=1';
     const args = [];
     if (opts.contact_id) { sql += ' AND contact_id = ?'; args.push(opts.contact_id); }
@@ -324,6 +331,10 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
     // Category defaults to 'general'; reject unknown values so a typo can't
     // hide an event from every page.
     const category = EVENT_CATEGORIES.has(input.category) ? input.category : 'general';
+    // Memorial events have their own table + handlers now. Reject any
+    // attempt to write category='memorial' here so the UI is forced through
+    // the new memorial_events:* channels.
+    if (category === 'memorial') throw new Error('请使用新建回忆事件页面');
     // Tag kind is no longer settable from the new-event form. The renderer
     // never sends it. We accept it from internal callers (festival auto-
     // create) but never from the form.
@@ -386,6 +397,7 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
   ipcMain.handle('events:update', (_e, id, input) => {
     const now = db.nowStr();
     const category = EVENT_CATEGORIES.has(input.category) ? input.category : 'general';
+    if (category === 'memorial') throw new Error('请使用新建回忆事件页面');
     let tagKind = null;
     if (input.tag_kind && EVENT_TAG_KINDS.has(input.tag_kind)) {
       tagKind = input.tag_kind;
@@ -447,10 +459,276 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
     return true;
   });
 
+  // ---- Memorial events ----
+  // Independent from the reminder-style events table. Records "what
+  // happened, when, with whom" — no remind/remind_kind/lunar/next_fire
+  // fields. Photo metadata lives in memorial_event_photos; the actual
+  // bytes are written to disk by photos_upload and served to the renderer
+  // via the `memorial-photo://` protocol registered in main/main.js.
+
+  // Photo storage lives under <appData>/MemoryPet/photos/<event_id>/.
+  function getPhotosDir() {
+    return path.join(app.getPath('appData'), 'MemoryPet', 'photos');
+  }
+  // Strip filesystem-hostile characters and clamp the basename before we
+  // trust it as a filename on disk.
+  function sanitizeFilename(name) {
+    const stripped = String(name || '')
+      .replace(/[\/\\:*?"<>|\x00-\x1f]/g, '_')
+      .replace(/^\.+/, '_')
+      .slice(0, 120);
+    return stripped || 'photo';
+  }
+  function guessExtFromMime(m) {
+    if (!m) return '';
+    return ({
+      'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif',
+      'image/webp': '.webp', 'image/bmp': '.bmp',
+      'image/heic': '.heic', 'image/heif': '.heic',
+    }[String(m).toLowerCase()] || '');
+  }
+
+  // Replace the contacts associated with a memorial event. Drops the old
+  // rows and inserts the new set in one transaction-ish block; unknown
+  // contact ids are silently skipped (the FK would error out otherwise).
+  function setMemorialEventContacts(eventId, contactIds) {
+    db.run('DELETE FROM memorial_event_contacts WHERE memorial_event_id = ?', [eventId]);
+    const now = db.nowStr();
+    for (const cid of contactIds) {
+      if (!db.one('SELECT id FROM contacts WHERE id = ?', [cid])) continue;
+      db.run(
+        `INSERT OR IGNORE INTO memorial_event_contacts(memorial_event_id, contact_id, created_at)
+         VALUES (?, ?, ?)`,
+        [eventId, cid, now]
+      );
+    }
+  }
+
+  // Trim a free-text form input. Non-strings and whitespace-only strings
+// collapse to null so the DB doesn't store meaningless blanks and the
+// search_index body stays tight.
+function normFreeText(s) {
+  return (typeof s === 'string' && s.trim()) ? s.trim() : null;
+}
+
+// Accept both YYYY-MM-DD and YYYY-MM-DD HH:MM[:SS] from the renderer
+  // (datetime-local produces the former shape, the form fills the seconds
+  // before posting). Anything else throws so the user sees a clear error
+  // instead of a silently-shifted occurrence date.
+  function normalizeOccurredAt(input, fallback) {
+    if (typeof input !== 'string' || !input.trim()) {
+      return fallback || db.nowStr();
+    }
+    const trimmed = input.trim();
+    const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+    if (dateOnly) return `${trimmed} 00:00:00`;
+    const dateTime = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})(?::(\d{2}))?$/.exec(trimmed);
+    if (!dateTime) throw new Error('事件发生时间格式无效');
+    const [, y, mo, d, h, mi, s = '00'] = dateTime;
+    return `${y}-${mo}-${d} ${h}:${mi}:${s}`;
+  }
+
+  ipcMain.handle('memorial_events:list', (_e, opts = {}) =>
+    db.listMemorialEvents(opts || {}));
+
+  ipcMain.handle('memorial_events:get', (_e, id) => db.getMemorialEvent(id));
+
+  ipcMain.handle('memorial_events:create', (_e, input) => {
+    const id = db.newId();
+    const now = db.nowStr();
+    const kind = (input && (input.kind === 'first_time' || input.kind === 'other'))
+      ? input.kind : 'other';
+    const title = (typeof input.title === 'string' && input.title.trim())
+      ? input.title.trim() : '回忆事件';
+    // 5 free-text fields, all nullable. Each is independently trimmed and
+    // stored only if non-empty; an empty string from the form becomes NULL
+    // so search_index doesn't include noise.
+    const place      = normFreeText(input && input.place);
+    const food       = normFreeText(input && input.food);
+    const outfit     = normFreeText(input && input.outfit);
+    const activities = normFreeText(input && input.activities);
+    const notes      = normFreeText(input && input.notes);
+    const occurredAt = normalizeOccurredAt(input && input.occurred_at);
+    const contactIds = Array.isArray(input && input.contact_ids)
+      ? Array.from(new Set(input.contact_ids.filter((x) => typeof x === 'string' && x.length)))
+      : [];
+    db.run(
+      `INSERT INTO memorial_events(id, kind, title,
+                                   place, food, outfit, activities, notes,
+                                   occurred_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, kind, title,
+       place, food, outfit, activities, notes,
+       occurredAt, now, now]
+    );
+    setMemorialEventContacts(id, contactIds);
+    db.upsertSearch('memorial_event', id,
+      [title, place, food, outfit, activities, notes, kind, occurredAt]
+        .filter(Boolean).join(' '));
+    return db.getMemorialEvent(id);
+  });
+
+  ipcMain.handle('memorial_events:update', (_e, id, input) => {
+    const now = db.nowStr();
+    const cur = db.one('SELECT * FROM memorial_events WHERE id = ?', [id]);
+    if (!cur) throw new Error('memorial_event not found');
+    const kind = (input && (input.kind === 'first_time' || input.kind === 'other'))
+      ? input.kind : cur.kind;
+    const title = (typeof input.title === 'string' && input.title.trim())
+      ? input.title.trim() : cur.title;
+    // Per-field "fall back to existing value if the form didn't send this
+    // key" semantics. The form always sends all 5 so the typeof check
+    // doubles as a defensive guard for partial updates from future callers.
+    const place      = (input && Object.prototype.hasOwnProperty.call(input, 'place'))
+      ? normFreeText(input.place) : cur.place;
+    const food       = (input && Object.prototype.hasOwnProperty.call(input, 'food'))
+      ? normFreeText(input.food) : cur.food;
+    const outfit     = (input && Object.prototype.hasOwnProperty.call(input, 'outfit'))
+      ? normFreeText(input.outfit) : cur.outfit;
+    const activities = (input && Object.prototype.hasOwnProperty.call(input, 'activities'))
+      ? normFreeText(input.activities) : cur.activities;
+    const notes      = (input && Object.prototype.hasOwnProperty.call(input, 'notes'))
+      ? normFreeText(input.notes) : cur.notes;
+    const occurredAt = normalizeOccurredAt(input && input.occurred_at, cur.occurred_at);
+    const contactIds = Array.isArray(input && input.contact_ids)
+      ? Array.from(new Set(input.contact_ids.filter((x) => typeof x === 'string' && x.length)))
+      : db.all('SELECT contact_id FROM memorial_event_contacts WHERE memorial_event_id = ?', [id])
+          .map((r) => r.contact_id);
+    db.run(
+      `UPDATE memorial_events
+          SET kind=?, title=?,
+              place=?, food=?, outfit=?, activities=?, notes=?,
+              occurred_at=?, updated_at=?
+        WHERE id=?`,
+      [kind, title,
+       place, food, outfit, activities, notes,
+       occurredAt, now, id]
+    );
+    setMemorialEventContacts(id, contactIds);
+    db.upsertSearch('memorial_event', id,
+      [title, place, food, outfit, activities, notes, kind, occurredAt]
+        .filter(Boolean).join(' '));
+    return db.getMemorialEvent(id);
+  });
+
+  ipcMain.handle('memorial_events:delete', (_e, id) => {
+    // Drop the on-disk photo directory before the DB rows. CASCADE on the
+    // photo FK removes the metadata rows automatically.
+    try {
+      fs.rmSync(path.join(getPhotosDir(), id), { recursive: true, force: true });
+    } catch (e) {
+      console.error('memorial_events:delete photo dir rm failed:', e);
+    }
+    db.run('DELETE FROM memorial_events WHERE id = ?', [id]);
+    db.deleteSearch('memorial_event', id);
+    return true;
+  });
+
+  ipcMain.handle('memorial_events:delete_many', (_e, ids) => {
+    if (!Array.isArray(ids) || ids.length === 0) return { deleted: 0 };
+    const safeIds = ids.filter((x) => typeof x === 'string' && x.length);
+    if (safeIds.length === 0) return { deleted: 0 };
+    for (const id of safeIds) {
+      try {
+        fs.rmSync(path.join(getPhotosDir(), id), { recursive: true, force: true });
+      } catch (e) {
+        console.error('memorial_events:delete_many photo dir rm failed:', e);
+      }
+      db.deleteSearch('memorial_event', id);
+    }
+    const placeholders = safeIds.map(() => '?').join(',');
+    db.run(`DELETE FROM memorial_events WHERE id IN (${placeholders})`, safeIds);
+    return { deleted: safeIds.length };
+  });
+
+  // ---- Memorial event photos ----
+  ipcMain.handle('memorial_events:photos_list', (_e, eventId) =>
+    db.listPhotosForMemorialEvent(eventId));
+
+  ipcMain.handle('memorial_events:photos_upload', (_e, eventId, input) => {
+    if (!input || !input.bytes) throw new Error('photo bytes required');
+    if (!db.one('SELECT id FROM memorial_events WHERE id = ?', [eventId])) {
+      throw new Error(`memorial_event not found: ${eventId}`);
+    }
+    const eventPath = path.join(getPhotosDir(), eventId);
+    fs.mkdirSync(eventPath, { recursive: true });
+    const safeBase = sanitizeFilename(input.filename || 'photo');
+    const ext = path.extname(safeBase) || guessExtFromMime(input.mime);
+    const baseName = safeBase.replace(/\.[^.]+$/, '') || 'photo';
+    let filename = `${baseName}${ext}`;
+    let n = 1;
+    // Disambiguate if the user picks two files with the same basename
+    // ("photo.jpg", "photo (1).jpg" both stripped to "photo").
+    while (fs.existsSync(path.join(eventPath, filename))) {
+      filename = `${baseName}-${n}${ext}`;
+      n += 1;
+    }
+    const fullPath = path.join(eventPath, filename);
+    const buf = Buffer.from(input.bytes);
+    fs.writeFileSync(fullPath, buf);
+    const id = db.newId();
+    const now = db.nowStr();
+    const relPath = path.posix.join('photos', eventId, filename);
+    db.run(
+      `INSERT INTO memorial_event_photos(id, memorial_event_id, relative_path, original_name, mime, size_bytes, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [id, eventId, relPath, input.filename || filename, input.mime || null, buf.length, now]
+    );
+    return db.one(
+      `SELECT id, relative_path, original_name, mime, size_bytes, created_at
+         FROM memorial_event_photos WHERE id = ?`,
+      [id]
+    );
+  });
+
+  ipcMain.handle('memorial_events:photos_delete', (_e, photoId) => {
+    const row = db.one('SELECT * FROM memorial_event_photos WHERE id = ?', [photoId]);
+    if (!row) return false;
+    const full = path.join(getPhotosDir(), row.memorial_event_id, path.basename(row.relative_path));
+    try { fs.unlinkSync(full); } catch {}
+    db.run('DELETE FROM memorial_event_photos WHERE id = ?', [photoId]);
+    // Tidy: remove the parent dir if it's now empty (best effort).
+    try {
+      const dir = path.dirname(full);
+      if (fs.existsSync(dir) && fs.readdirSync(dir).length === 0) {
+        fs.rmdirSync(dir);
+      }
+    } catch {}
+    return true;
+  });
+
+  // Read a single photo's content as a base64 data URL. We deliberately
+  // avoid a custom `memorial-photo://` scheme because CSP `default-src 'self'`
+  // refuses to load images from any non-self protocol — the <img> tag falls
+  // back to the broken-image icon. Data URLs sidestep the CSP entirely.
+  //
+  // Returns: { data_url, mime } or null if the row is missing. The renderer
+  // turns `data_url` into <img src=…>. Each photo is a few MB at typical
+  // upload sizes — fine for an in-memory base64 round-trip, and the browser
+  // caches the decoded bitmap so re-renders don't re-read.
+  ipcMain.handle('memorial_events:photo_read', (_e, photoId) => {
+    const row = db.one('SELECT * FROM memorial_event_photos WHERE id = ?', [photoId]);
+    if (!row) return null;
+    const full = path.join(getPhotosDir(), row.memorial_event_id, path.basename(row.relative_path));
+    if (!fs.existsSync(full)) return null;
+    try {
+      const buf = fs.readFileSync(full);
+      const mime = row.mime || ({
+        '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+        '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp',
+        '.heic': 'image/heic', '.heif': 'image/heic',
+      }[path.extname(full).toLowerCase()] || 'application/octet-stream');
+      return { data_url: `data:${mime};base64,${buf.toString('base64')}`, mime };
+    } catch (e) {
+      console.error('photo_read failed:', e);
+      return null;
+    }
+  });
+
   // ---- Search ----
   ipcMain.handle('search:query', (_e, q) => {
     q = (q || '').trim();
-    if (!q) return { contacts: [], events: [], important_dates: [] };
+    if (!q) return { contacts: [], events: [], memorial_events: [], important_dates: [] };
     const like = `%${q}%`;
     const contacts = db.all(
       `SELECT * FROM contacts WHERE listed=1 AND (
@@ -461,8 +739,18 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
       [like, like, like]
     ).map(db.parseContactRow);
     const events = db.all('SELECT * FROM events WHERE title LIKE ? OR description LIKE ?', [like, like]);
+    // Memorial events are searched by title/description only (kind lives in a
+    // separate column we don't text-match). The renderer doesn't show
+    // contact names on the search-result card, so we don't need the join
+    // table here.
+    const memorial = db.all(
+      `SELECT * FROM memorial_events
+        WHERE title LIKE ? OR place LIKE ? OR food LIKE ?
+           OR outfit LIKE ? OR activities LIKE ? OR notes LIKE ?`,
+      [like, like, like, like, like, like]
+    );
     const dates = db.all('SELECT * FROM important_dates WHERE label LIKE ?', [like]);
-    return { contacts, events, important_dates: dates };
+    return { contacts, events, memorial_events: memorial, important_dates: dates };
   });
 
   // ---- Reminders ----

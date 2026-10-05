@@ -3,7 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <!-- img-src includes data: so <img src="data:image/png;base64,…"> works.
+       The memorial-event photos are served as data URLs from the main
+       process (memorial_events:photo_read IPC); without `data:` the CSP
+       blocks them and the <img> falls back to the broken-image icon.
+       `default-src 'self'` alone covers `script-src`, `style-src`,
+       `connect-src`, etc.; we explicitly widen `img-src` and `style-src`
+       (the inline styles used by the date picker / chips / photo grid
+       require 'unsafe-inline'). -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
   <title>MemoryPet</title>
   <link rel="stylesheet" href="css/styles.css" />
 </head>

@@ -28,8 +28,9 @@ async function runSearch(q) {
   const out = document.getElementById('search-results');
   out.innerHTML = `<div class="empty">搜索中…</div>`;
   const r = await api.search.query(q);
+  const memorial = r.memorial_events || [];
   out.innerHTML = `
-    ${r.contacts.length === 0 && r.events.length === 0 && r.important_dates.length === 0
+    ${r.contacts.length === 0 && r.events.length === 0 && memorial.length === 0 && r.important_dates.length === 0
       ? `<div class="empty">没有匹配结果</div>`
       : ''}
     ${r.contacts.length > 0 ? `
@@ -53,6 +54,14 @@ async function runSearch(q) {
           <div class="meta">${fmtDateTime(e.next_fire_at || e.remind_date)} · ${kindLabel(e.remind_kind)}${e.lunar_month && e.lunar_day ? ' · 农历 ' + e.lunar_month + '月' + e.lunar_day + '日' : ''}</div>
         </div>
       `).join('')}` : ''}
+    ${memorial.length > 0 ? `
+      <div class="section-header"><h2>回忆事件 (${memorial.length})</h2></div>
+      ${memorial.map((e) => `
+        <div class="card clickable" data-id="${escapeHtml(e.id)}" data-action="memorial">
+          <div><strong>${escapeHtml(e.title || '(无标题)')}</strong> <span class="tag">${escapeHtml(e.kind === 'first_time' ? '第一次' : '其他')}</span></div>
+          <div class="meta">发生：${escapeHtml(fmtDateTime(e.occurred_at))}</div>
+        </div>
+      `).join('')}` : ''}
     ${r.important_dates.length > 0 ? `
       <div class="section-header"><h2>重要日期 (${r.important_dates.length})</h2></div>
       ${r.important_dates.map((d) => `
@@ -67,6 +76,9 @@ async function runSearch(q) {
   });
   out.querySelectorAll('[data-action="event"]').forEach((el) => {
     el.onclick = () => navigate('/events/' + el.dataset.id);
+  });
+  out.querySelectorAll('[data-action="memorial"]').forEach((el) => {
+    el.onclick = () => navigate('/events/' + el.dataset.id + '?category=memorial');
   });
 }
 

@@ -1,5 +1,9 @@
-// src/js/pages/events_memorial.js — 回忆事件 list (category='memorial')
-import { api, escapeHtml, displayName, fmtDateTime, toast } from '../api.js';
+// src/js/pages/events_memorial.js — 回忆事件 list.
+//
+// Reads from `memorial_events` (independent of the reminder events table).
+// Each row carries its own kind ('first_time' / 'other'), occurrence time,
+// multi-contact list, and an optional thumbnail of the first uploaded photo.
+import { api, escapeHtml, displayName, fmtDateTime, toast, memorialPhotoUrl, fetchPhotoDataUrl } from '../api.js';
 import { register, navigate } from '../router.js';
 import {
   bulkEnterLinkHtml, bulkToolbarHtml, bulkSelectableRowHtml,
@@ -13,13 +17,14 @@ const pageState = { selectMode: { active: false, selected: new Set() } };
 async function render(args, params) {
   const app = document.getElementById('app');
   app.innerHTML = `<div class="empty">载入中…</div>`;
-  const opts = { category: 'memorial' };
+  const opts = {};
   if (params.contact_id) opts.contact_id = params.contact_id;
-  const [events, contacts] = await Promise.all([
-    api.events.list(opts),
-    api.contacts.list(),
-  ]);
-  const cById = Object.fromEntries(contacts.map((c) => [c.id, c]));
+  const events = await api.memorialEvents.list(opts);
+  // Pre-warm the data-URL cache for every row that has a first photo so the
+  // first paint shows the thumbnail without a second IPC round-trip.
+  for (const e of events) {
+    if (e.first_photo_id) fetchPhotoDataUrl(e.first_photo_id);
+  }
 
   app.innerHTML = `
     <div class="row between">
@@ -34,22 +39,23 @@ async function render(args, params) {
     ${events.length === 0
       ? `<div class="empty">还没有回忆事件 · 点 + 新建 创建一个</div>`
       : events.map((e) => pageState.selectMode.active
-          ? bulkSelectableRowHtml(rowInner(e, cById), e.id, pageState.selectMode.selected.has(e.id))
-          : renderRow(e, cById)).join('')}
+          ? bulkSelectableRowHtml(rowInner(e), e.id, pageState.selectMode.selected.has(e.id))
+          : renderRow(e)).join('')}
   `;
 
   if (!pageState.selectMode.active) {
     app.querySelectorAll('.card.clickable').forEach((el) => {
-      el.onclick = () => navigate('/events/' + el.dataset.id);
+      el.onclick = () => navigate('/events/' + el.dataset.id + '?category=memorial');
     });
   }
-  document.getElementById('new-event').onclick = () => navigate('/events/new?category=memorial');
+  document.getElementById('new-event').onclick = () =>
+    navigate('/events/new?category=memorial' + (params.contact_id ? '&contact_id=' + params.contact_id : ''));
 
   // Bulk-select mode wiring.
   if (pageState.selectMode.active) {
     const handlers = {
       onDelete: async (ids) => {
-        const result = await api.events.deleteMany(ids);
+        const result = await api.memorialEvents.deleteMany(ids);
         render(args, params);
         return result;
       },
@@ -79,38 +85,47 @@ async function render(args, params) {
   });
 }
 
-function renderRow(e, cById) {
+function kindTagLabel(kind) {
+  return kind === 'first_time' ? '第一次' : '其他';
+}
+
+function contactSummary(e) {
+  const names = (e.contact_names || []).filter(Boolean);
+  if (names.length === 0) return '独立事件';
+  if (names.length === 1) return names[0];
+  return `${names[0]} 等 ${names.length} 人`;
+}
+
+function thumbHtml(e) {
+  const url = memorialPhotoUrl(e.first_photo_id);
+  if (!url) return '';
+  return `<img class="thumb" src="${escapeHtml(url)}" alt="" loading="lazy"/>`;
+}
+
+function renderRow(e) {
   return `
     <div class="card clickable" data-id="${escapeHtml(e.id)}">
       <div class="row between">
         <div>
-          <div><strong>${escapeHtml(e.title)}</strong>${e.tag_kind ? ` <span class="tag">${tagKindLabel(e.tag_kind)}</span>` : ''}</div>
-          <div class="meta">${fmtDateTime(e.next_fire_at || e.remind_date)} · ${kindLabel(e.remind_kind)}${e.lunar_month && e.lunar_day ? ' · 农历 ' + e.lunar_month + '月' + e.lunar_day + '日' : ''}${e.contact_id && cById[e.contact_id] ? ' · ' + escapeHtml(displayName(cById[e.contact_id])) : ''}${e.active ? '' : ' · 已结束'}</div>
+          <div><strong>${escapeHtml(e.title || '(无标题)')}</strong> <span class="tag">${escapeHtml(kindTagLabel(e.kind))}</span></div>
+          <div class="meta">发生：${escapeHtml(fmtDateTime(e.occurred_at))} · ${escapeHtml(contactSummary(e))}${e.photo_count > 0 ? ` · ${e.photo_count} 张照片` : ''}</div>
         </div>
-        <div>${e.remind ? '<span class="tag">提醒</span>' : ''}</div>
+        ${thumbHtml(e)}
       </div>
     </div>
   `;
 }
 
-function rowInner(e, cById) {
+function rowInner(e) {
   return `
     <div class="row between">
       <div>
-        <div><strong>${escapeHtml(e.title)}</strong>${e.tag_kind ? ` <span class="tag">${tagKindLabel(e.tag_kind)}</span>` : ''}</div>
-        <div class="meta">${fmtDateTime(e.next_fire_at || e.remind_date)} · ${kindLabel(e.remind_kind)}${e.lunar_month && e.lunar_day ? ' · 农历 ' + e.lunar_month + '月' + e.lunar_day + '日' : ''}${e.contact_id && cById[e.contact_id] ? ' · ' + escapeHtml(displayName(cById[e.contact_id])) : ''}${e.active ? '' : ' · 已结束'}</div>
+        <div><strong>${escapeHtml(e.title || '(无标题)')}</strong> <span class="tag">${escapeHtml(kindTagLabel(e.kind))}</span></div>
+        <div class="meta">发生：${escapeHtml(fmtDateTime(e.occurred_at))} · ${escapeHtml(contactSummary(e))}${e.photo_count > 0 ? ` · ${e.photo_count} 张照片` : ''}</div>
       </div>
-      <div>${e.remind ? '<span class="tag">提醒</span>' : ''}</div>
+      ${thumbHtml(e)}
     </div>
   `;
-}
-
-function kindLabel(k) {
-  return ({ one_time: '一次', daily: '每天', monthly: '每月', yearly: '每年', none: '不提醒' }[k]) || k || '';
-}
-
-function tagKindLabel(k) {
-  return ({ birthday: '生日', anniversary: '纪念日', festival: '节日' }[k]) || '';
 }
 
 register('/events/memorial', render);

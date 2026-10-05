@@ -286,3 +286,222 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
+
+/* Memorial event form: multi-contact picker.
+   Each contact is a card in a flexible grid; clicking a card toggles the
+   `.selected` class. The toolbar above provides 全选 / 清空 + a live count.
+   This replaces the previous native <select multiple> + chip-row, which
+   required ctrl-click and made deselection awkward. */
+.contact-picker-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.btn-tiny {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+.contact-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.contact-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 100ms, background 100ms;
+}
+.contact-pick:hover {
+  border-color: var(--accent);
+}
+.contact-pick.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.contact-pick-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: white;
+  color: white;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.contact-pick.selected .contact-pick-check {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.contact-pick-name {
+  font-weight: 500;
+  font-size: 13px;
+}
+.contact-pick-meta {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* Photo lightbox. Appended to <body> on demand and reused across opens.
+   Click on the backdrop or the ✕ closes; Escape also closes. The .open
+   class toggles display so we don't keep the (potentially heavy) img in
+   the layout tree when not in use. */
+.photo-lightbox {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  z-index: 300;
+  justify-content: center;
+  align-items: center;
+}
+.photo-lightbox.open {
+  display: flex;
+}
+.photo-lightbox-card {
+  position: relative;
+  max-width: 92vw;
+  max-height: 92vh;
+  background: var(--panel);
+  border-radius: 10px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.photo-lightbox-card img {
+  max-width: 100%;
+  max-height: 80vh;
+  object-fit: contain;
+  border-radius: 6px;
+}
+.photo-lightbox-x {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: rgba(0, 0, 0, 0.6);
+  color: white;
+  border: none;
+  border-radius: 999px;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 28px;
+  padding: 0;
+}
+.photo-lightbox-caption {
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* Memorial event form: multi-contact chip selector.
+   A native <select multiple> sits on top; chips below show the current
+   selection and let the user remove individual chips without re-opening the
+   picker. The visual language reuses the existing .tag pill so the form
+   stays consistent with the rest of the app. */
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  min-height: 0;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.chip .chip-x {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 12px;
+  padding: 0 0 0 2px;
+  line-height: 1;
+}
+.chip .chip-x:hover { color: var(--danger); }
+
+/* Photo picker previews (new files picked in the form). The first child
+   inside .photo-preview is a .photo-item added in event_edit.js. */
+.photo-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* Already-uploaded photos on the edit page. Each .photo-item is a 96x96
+   thumb with a circular close button in the top-right corner. */
+.photo-existing {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.photo-existing .photo-item {
+  position: relative;
+  width: 96px;
+  height: 96px;
+}
+.photo-existing .photo-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  cursor: zoom-in;
+  display: block;
+}
+.photo-existing .photo-item .photo-x {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  background: rgba(0, 0, 0, 0.55);
+  color: white;
+  border: none;
+  border-radius: 999px;
+  width: 22px;
+  height: 22px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 22px;
+  padding: 0;
+}
+
+/* List-page thumbnail (memorial events list). */
+.thumb {
+  width: 32px;
+  height: 32px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  margin-left: 8px;
+  flex-shrink: 0;
+}
