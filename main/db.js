@@ -10,6 +10,13 @@ CREATE TABLE IF NOT EXISTS contacts (
   id           TEXT PRIMARY KEY,
   name         TEXT NOT NULL DEFAULT '',
   relationship TEXT,
+  -- icon_kind: which Lucide-style glyph to render for this contact. Default
+  -- 'user' is a generic person silhouette; the editor auto-suggests a more
+  -- specific glyph when the user types a relationship.
+  icon_kind    TEXT NOT NULL DEFAULT 'user',
+  -- custom_avatar_path: absolute path to a user-uploaded image, or null.
+  -- When non-null the renderer prefers this image over icon_kind.
+  custom_avatar_path TEXT,
   likes_json   TEXT NOT NULL DEFAULT '[]',
   taboos_json  TEXT NOT NULL DEFAULT '[]',
   gifts_json   TEXT NOT NULL DEFAULT '[]',
@@ -177,6 +184,7 @@ async function open(dbPathArg) {
   db = bytes ? new SQL.Database(bytes) : new SQL.Database();
   db.run(SCHEMA);
   migrateContactsV2();
+  migrateContactsAvatarV1();
   migrateAttributesV1();
   migrateEventsCategoryV1();
   migrateEventsTagKindV1();
@@ -347,6 +355,31 @@ function migrateContactsV2() {
       console.error('contacts v2 search reindex failed:', e);
     }
   }
+}
+
+// ---- Contacts avatar migration ----
+// Adds the `icon_kind` and `custom_avatar_path` columns to legacy contacts
+// tables so the renderer can switch from "first-letter color block" to a
+// Lucide-style glyph. Mirrors the migrateContactsV2 pattern: PRAGMA-based
+// column detection, then idempotent ALTER. No reindex is needed because the
+// new fields are visual-only and are not part of buildContactBody().
+function migrateContactsAvatarV1() {
+  if (!db) return;
+  const cols = db.prepare("PRAGMA table_info(contacts)");
+  const names = new Set();
+  while (cols.step()) names.add(cols.get()[1]);
+  cols.free();
+
+  let altered = false;
+  if (!names.has('icon_kind')) {
+    db.run("ALTER TABLE contacts ADD COLUMN icon_kind TEXT NOT NULL DEFAULT 'user'");
+    altered = true;
+  }
+  if (!names.has('custom_avatar_path')) {
+    db.run("ALTER TABLE contacts ADD COLUMN custom_avatar_path TEXT");
+    altered = true;
+  }
+  if (altered) markDirty();
 }
 
 function safeParseArray(s) {
@@ -921,6 +954,9 @@ function migrateMemorialEventsV2() {
 //   - first_photo_id + first_photo_relative_path: id and path of the
 //     earliest uploaded photo. The renderer uses the id to load the bytes
 //     via `memorial_events:photo_read` (CSP-safe data URL).
+//   - second_photo_id: id of the second-earliest uploaded photo (or null
+//     when there are fewer than two). The list page can render up to two
+//     small thumbnails side-by-side without a second round-trip.
 function listMemorialEvents(opts = {}) {
   let sql = `SELECT me.*,
                     (SELECT COUNT(*) FROM memorial_event_photos p WHERE p.memorial_event_id = me.id) AS photo_count,
@@ -931,7 +967,11 @@ function listMemorialEvents(opts = {}) {
                     (SELECT p.relative_path
                        FROM memorial_event_photos p
                       WHERE p.memorial_event_id = me.id
-                      ORDER BY p.created_at ASC LIMIT 1) AS first_photo_relative_path
+                      ORDER BY p.created_at ASC LIMIT 1) AS first_photo_relative_path,
+                    (SELECT p.id
+                       FROM memorial_event_photos p
+                      WHERE p.memorial_event_id = me.id
+                      ORDER BY p.created_at ASC LIMIT 1 OFFSET 1) AS second_photo_id
                FROM memorial_events me
               WHERE 1=1`;
   const args = [];

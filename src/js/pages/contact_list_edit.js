@@ -5,7 +5,7 @@
 // Reads and writes go through the new contact_attributes table via
 // `api.attributes.*` (kind is mapped from the URL's plural form to the
 // single form stored in the DB).
-import { api, escapeHtml, displayName, fmtDate, toast, todayYmd } from '../api.js';
+import { api, escapeHtml, displayName, fmtDate, toast, todayYmd, wireDateInputs } from '../api.js';
 import { register, navigate } from '../router.js';
 
 const KIND_META = {
@@ -18,15 +18,11 @@ function renderRow(it) {
   const desc = escapeHtml(it.description || '');
   const date = it.event ? `<div class="meta">${escapeHtml(fmtDate(it.event))}</div>` : '';
   return `
-    <div class="card list-item-row" data-id="${escapeHtml(it.id)}">
+    <div class="card list-item-row clickable attribute-clickable" data-id="${escapeHtml(it.id)}" style="cursor:pointer;">
       <div class="row between">
-        <div>
-          <div><strong>${desc}</strong></div>
+        <div style="flex:1; min-width:0;">
+          <div class="lr-title-main">${desc}</div>
           ${date}
-        </div>
-        <div class="row" style="gap:6px;">
-          <button type="button" class="icon-btn row-edit" title="编辑">✎</button>
-          <button type="button" class="icon-btn row-del" title="删除">✕</button>
         </div>
       </div>
     </div>
@@ -76,7 +72,7 @@ async function render(args) {
   const state = {
     editingId: null,
     draftDescription: '',
-    draftEvent: '',
+    draftEvent: todayYmd(),
     items: [],
   };
 
@@ -122,7 +118,9 @@ async function render(args) {
       ev.value = state.draftEvent;
     } else {
       desc.value = '';
-      ev.value = '';
+      // New rows default to today's local date so the user gets a sensible
+      // value without picking anything.
+      ev.value = state.draftEvent || todayYmd();
     }
     save.onclick = async () => {
       const description = desc.value.trim();
@@ -148,7 +146,7 @@ async function render(args) {
       }
       state.editingId = null;
       state.draftDescription = '';
-      state.draftEvent = '';
+      state.draftEvent = todayYmd();
       await refreshItems();
       rerender();
     };
@@ -156,42 +154,18 @@ async function render(args) {
       cancel.onclick = () => {
         state.editingId = null;
         state.draftDescription = '';
-        state.draftEvent = '';
+        state.draftEvent = todayYmd();
         rerender();
       };
     }
+    // Make the date input open its picker on click of the whole box.
+    wireDateInputs(document.getElementById('app'));
   }
 
   function wireRows() {
-    app.querySelectorAll('.list-item-row').forEach((row) => {
-      const id = row.dataset.id;
-      const edit = row.querySelector('.row-edit');
-      const del = row.querySelector('.row-del');
-      edit.onclick = () => {
-        const it = state.items.find((x) => x && x.id === id);
-        if (!it) return;
-        state.editingId = id;
-        state.draftDescription = it.description || '';
-        state.draftEvent = it.event || '';
-        rerender();
-      };
-      del.onclick = async () => {
-        if (!confirm('确认删除该条目？')) return;
-        try {
-          await api.attributes.delete(id);
-          toast('已删除');
-        } catch (e) {
-          toast('删除失败：' + (e.message || e));
-          return;
-        }
-        if (state.editingId === id) {
-          state.editingId = null;
-          state.draftDescription = '';
-          state.draftEvent = '';
-        }
-        await refreshItems();
-        rerender();
-      };
+    // Click on a row navigates to the dedicated detail/edit page.
+    app.querySelectorAll('.attribute-clickable').forEach((row) => {
+      row.onclick = () => navigate('/attributes/' + row.dataset.id);
     });
   }
 

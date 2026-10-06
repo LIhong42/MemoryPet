@@ -1,6 +1,20 @@
 // src/js/pages/contacts_list.js — list + create
-import { api, escapeHtml, firstChar, displayName, contactColorIndex, toast } from '../api.js';
+import { api, escapeHtml, contactColorIndex, displayName, getCachedAvatarDataUrl, warmAvatarCache } from '../api.js';
+import { iconSVG, suggestIconKind } from '../icons.js';
 import { register, navigate } from '../router.js';
+
+// Render the avatar block for a single contact row. When the contact has
+// an uploaded photo (cached as a data URL by `warmAvatarCache` + an async
+// `fetchAvatarDataUrl`) we prefer the photo; otherwise we render a Lucide
+// glyph chosen from `icon_kind` or auto-suggested from `relationship`.
+function contactAvatarHTML(c) {
+  const url = c.custom_avatar_path ? getCachedAvatarDataUrl(c.id) : '';
+  if (url) return `<img src="${escapeHtml(url)}" alt=""/>`;
+  const name = c.icon_kind && c.icon_kind !== 'user'
+    ? c.icon_kind
+    : suggestIconKind(c.relationship);
+  return iconSVG(name, { title: displayName(c) });
+}
 
 export async function render() {
   const app = document.getElementById('app');
@@ -9,6 +23,9 @@ export async function render() {
   // Pre-compute the per-contact palette index once so we don't re-hash on
   // every row's data-attribute set.
   const tone = (name) => contactColorIndex(name);
+  // Warm the avatar cache so contacts with custom photos repaint on the
+  // second tick without a per-row IPC.
+  for (const c of contacts) if (c.custom_avatar_path) warmAvatarCache(c.id);
   app.innerHTML = `
     <div class="row between">
       <h1>联系人 <span class="meta" style="margin-left:6px">· ${contacts.length} 人</span></h1>
@@ -17,16 +34,21 @@ export async function render() {
     ${contacts.length === 0
       ? `<div class="empty">还没有联系人 · 点 + 新建 创建一个</div>`
       : contacts.map((c) => `
-        <div class="card list-row clickable" data-contact-color="${tone(c.name)}" data-id="${escapeHtml(c.id)}">
+        <div class="card list-row clickable"
+             data-contact-color="${tone(c.name)}"
+             data-id="${escapeHtml(c.id)}">
           <div class="lr-id">
-            <div class="avatar-lg" style="background: var(--contact-${tone(c.name)})">${escapeHtml(firstChar(c.name))}</div>
+            <div class="contact-avatar" style="color: var(--contact-${tone(c.name)})">
+              ${contactAvatarHTML(c)}
+            </div>
           </div>
           <div class="lr-main">
-            <div class="lr-title">${escapeHtml(displayName(c))}</div>
-            <div class="lr-meta">${c.relationship ? escapeHtml(c.relationship) + ' · ' : ''}按此查看喜好 / 忌讳 / 礼物 / 事件</div>
-          </div>
-          <div class="lr-side">
-            <div class="time-chip muted">详情 →</div>
+            <div class="lr-title">
+              ${escapeHtml(displayName(c))}
+              ${c.relationship
+                ? `<span class="relationship-sep">·</span><span class="relationship">${escapeHtml(c.relationship)}</span>`
+                : ''}
+            </div>
           </div>
         </div>
       `).join('')}

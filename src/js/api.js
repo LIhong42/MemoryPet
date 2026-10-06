@@ -12,6 +12,9 @@ export const api = {
     create: (input) => M.contacts.create(input),
     update: (id, input) => M.contacts.update(id, input),
     delete: (id) => M.contacts.delete(id),
+    uploadAvatar: (id, payload) => M.contacts.uploadAvatar(id, payload),
+    readAvatar:   (id)          => M.contacts.readAvatar(id),
+    deleteAvatar: (id)          => M.contacts.deleteAvatar(id),
   },
   attributes: {
     list:   (kind, opts) => M.attributes.list(kind, opts || {}),
@@ -65,8 +68,16 @@ export const api = {
     getPosition: () => M.pet.getPosition(),
     showMain: () => M.pet.showMain(),
     openReminder: () => M.pet.openReminder?.() || M.pet.showMain(),
-    getSpecies: () => M.pet.getSpecies(),
-    setSpecies: (s) => M.pet.setSpecies(s),
+    // Legacy species getters/setters kept as thin wrappers around the new
+    // pet_id registry so older callers still compile.
+    getSpecies: () => M.pet.getSpecies?.() || M.pet.getCurrent?.(),
+    setSpecies: (s) => M.pet.setCurrent?.(s),
+    // New frame-based registry.
+    list: () => M.pet.list?.() || Promise.resolve([]),
+    getCurrent: () => M.pet.getCurrent?.(),
+    setCurrent: (id) => M.pet.setCurrent?.(id),
+    resolveFrames: (petId, variant, direction) =>
+      M.pet.resolveFrames?.(petId, variant, direction),
     getWalkEnabled: () => M.pet.getWalkEnabled(),
     setWalkEnabled: (b) => M.pet.setWalkEnabled(b),
   },
@@ -114,6 +125,59 @@ export function todayYmd() {
   const d = new Date();
   const pad = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+// Local-time "YYYY-MM-DDTHH:MM" for datetime-local inputs. Same purpose as
+// `todayYmd` but for datetime pickers (see toYMD on the comment in the file).
+export function nowDatetimeLocal() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// Make the whole <input type="date"> / type="time"> / type="datetime-local">
+// box open its native picker on click, not only the tiny calendar icon on the
+// right. Iterates once over the supplied root (or document) and wires every
+// date-shaped input it finds. Re-running on a re-render is safe — handlers
+// are idempotent because we replace `onclick` rather than append.
+//
+// `showPicker()` is supported since Chromium 99 / Electron 15+. We feature-
+// detect and silently no-op in older runtimes, where the user still has the
+// trailing icon to fall back on.
+export function wireDateInputs(root) {
+  const scope = root || document;
+  const els = scope.querySelectorAll('input[type="date"], input[type="time"], input[type="datetime-local"]');
+  for (const el of els) {
+    el.onclick = (e) => {
+      // Don't fight the user when they're typing into the visible text part
+      // (date pickers also have a free-text mode in some locales); only auto-
+      // open when the click landed in the calendar-icon gutter, or on an
+      // empty input. In practice: always try showPicker() — it's a no-op if
+      // the picker is already showing or if the input is unfocused.
+      try {
+        if (typeof el.showPicker === 'function') {
+          el.showPicker();
+        }
+      } catch (_) {
+        // showPicker() rejects if the input is disabled or already showing;
+        // both are fine — do nothing.
+      }
+      // Mark the input as having been opened via click so subsequent focus
+      // events don't double-open it on re-renders that reuse the same node.
+      el.dataset.datePickerOpened = '1';
+    };
+    // Belt-and-braces: opening on focus as well, so a Tab into the field also
+    // pops the calendar. Skipped if the click handler above already opened it.
+    el.onfocus = () => {
+      if (el.dataset.datePickerOpened === '1') {
+        el.dataset.datePickerOpened = '';
+        return;
+      }
+      try {
+        if (typeof el.showPicker === 'function') el.showPicker();
+      } catch (_) {}
+    };
+  }
 }
 
 export function fmtDateTime(s) {
@@ -313,6 +377,62 @@ export function invalidatePhotoDataUrl(photoId) {
   if (!photoId) return;
   photoDataUrlCache.delete(photoId);
   photoFetchInflight.delete(photoId);
+}
+
+// Contact avatar data-URL cache. Mirrors the photo cache above: the
+// `custom_avatar_path` column only stores a relative path (e.g.
+// "<contact_id>.jpg") which the renderer can't turn into an <img src=…>
+// without a round-trip. We hide that by resolving the path server-side
+// and caching the resulting data URL here. Cache key is the contact id.
+const avatarDataUrlCache = new Map();
+const avatarFetchInflight = new Map();
+
+// Synchronous lookup. Returns the cached data URL or '' when missing.
+export function getCachedAvatarDataUrl(contactId) {
+  if (!contactId) return '';
+  return avatarDataUrlCache.get(contactId) || '';
+}
+
+// Async resolver: returns a Promise<string>. First call IPCs to main and
+// caches the result; subsequent calls return the cached value.
+export async function fetchAvatarDataUrl(contactId) {
+  if (!contactId) return '';
+  if (avatarDataUrlCache.has(contactId)) return avatarDataUrlCache.get(contactId);
+  if (avatarFetchInflight.has(contactId)) return avatarFetchInflight.get(contactId);
+  const p = (async () => {
+    try {
+      const r = await api.contacts.readAvatar(contactId);
+      const url = (r && r.data_url) || '';
+      if (url) avatarDataUrlCache.set(contactId, url);
+      return url;
+    } catch (e) {
+      console.error('fetchAvatarDataUrl failed for', contactId, e);
+      return '';
+    } finally {
+      avatarFetchInflight.delete(contactId);
+    }
+  })();
+  avatarFetchInflight.set(contactId, p);
+  return p;
+}
+
+// Fire-and-forget cache warmer. The list pages call this for every row
+// before the first render so the second paint shows the avatar without
+// further round-trips.
+export function warmAvatarCache(contactId) {
+  if (!contactId) return;
+  if (!avatarDataUrlCache.has(contactId) && !avatarFetchInflight.has(contactId)) {
+    fetchAvatarDataUrl(contactId);
+  }
+}
+
+// Drop the cached entry for a contact — call after upload/delete so the
+// renderer doesn't keep showing stale (or, post-delete, freshly uploaded)
+// bytes for the same contact id.
+export function invalidateAvatarDataUrl(contactId) {
+  if (!contactId) return;
+  avatarDataUrlCache.delete(contactId);
+  avatarFetchInflight.delete(contactId);
 }
 
 // Legacy shape compatibility — the row helper `listMemorialEvents` /

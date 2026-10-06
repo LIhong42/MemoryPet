@@ -37,7 +37,7 @@ class ReminderQueue {
 
 let timer = null;
 
-function start({ queue, getPetState, setPetState, setActiveReminder }) {
+function start({ queue, getPetState, setPetState, setActiveReminder, petController }) {
   function tick() {
     try {
       scanAndFire({ queue, getPetState, setPetState, setActiveReminder });
@@ -160,11 +160,14 @@ function scanAndFire({ queue, getPetState, setPetState, setActiveReminder }) {
   if (len > 0 && !getPetState()) {
     setPetState(true);
     setActiveReminder(queue.head());
+    if (petController && petController.setReminding) petController.setReminding(true);
   } else if (len > 0) {
     setActiveReminder(queue.head());
+    if (petController && petController.setReminding) petController.setReminding(true);
   } else if (getPetState()) {
     setPetState(false);
     setActiveReminder(null);
+    if (petController && petController.setReminding) petController.setReminding(false);
   }
 }
 

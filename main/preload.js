@@ -9,6 +9,13 @@ contextBridge.exposeInMainWorld('mp', {
     create: (input) => ipcRenderer.invoke('contacts:create', input),
     update: (id, input) => ipcRenderer.invoke('contacts:update', id, input),
     delete: (id) => ipcRenderer.invoke('contacts:delete', id),
+    // Avatar upload/read/delete. `upload` payload shape mirrors the photo
+    // uploaders: { filename, mime, bytes (ArrayBuffer|Uint8Array) }. `read`
+    // returns { data_url, mime } or null when no avatar is set — embed the
+    // data_url into <img src=…> directly (CSP-safe).
+    uploadAvatar: (id, payload) => ipcRenderer.invoke('contacts:upload_avatar', id, payload),
+    readAvatar:   (id)            => ipcRenderer.invoke('contacts:avatar_read', id),
+    deleteAvatar: (id)            => ipcRenderer.invoke('contacts:avatar_delete', id),
   },
   // contact attributes (likes / taboos / gifts — global table)
   attributes: {
@@ -73,9 +80,16 @@ contextBridge.exposeInMainWorld('mp', {
     getPosition: () => ipcRenderer.invoke('pet:get_position'),
     showMain: () => ipcRenderer.invoke('window:show_main'),
     openReminder: () => ipcRenderer.invoke('window:open_reminder'),
-    // Species + autonomous-walk controls.
+    // Legacy species API kept as a thin wrapper around the new pet-id registry.
     getSpecies: () => ipcRenderer.invoke('pet:get_species'),
     setSpecies: (s) => ipcRenderer.invoke('pet:set_species', s),
+    // New frame-based registry.
+    list: () => ipcRenderer.invoke('pet:list'),
+    getCurrent: () => ipcRenderer.invoke('pet:get_current'),
+    setCurrent: (id) => ipcRenderer.invoke('pet:set_current', id),
+    resolveFrames: (petId, variant, direction) =>
+      ipcRenderer.invoke('pet:resolve_frames', petId, variant, direction),
+    // Autonomous-walk controls.
     getWalkEnabled: () => ipcRenderer.invoke('pet:get_walk_enabled'),
     setWalkEnabled: (b) => ipcRenderer.invoke('pet:set_walk_enabled', b),
   },

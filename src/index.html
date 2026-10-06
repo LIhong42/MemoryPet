@@ -11,7 +11,7 @@
        `connect-src`, etc.; we explicitly widen `img-src` and `style-src`
        (the inline styles used by the date picker / chips / photo grid
        require 'unsafe-inline'). -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: file:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
   <title>MemoryPet</title>
   <link rel="stylesheet" href="css/styles.css" />
 </head>

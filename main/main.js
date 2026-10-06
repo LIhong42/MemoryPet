@@ -7,6 +7,7 @@ const db = require('./db');
 const scheduler = require('./scheduler');
 const ipc = require('./ipc');
 const { PetController } = require('./pet_controller');
+const { PetRegistry } = require('./pet_registry');
 
 const isDev = process.argv.includes('--dev') || !app.isPackaged;
 
@@ -157,11 +158,19 @@ app.on('second-instance', () => {
 app.whenReady().then(async () => {
   await db.open(getDbPath());
 
+  // Scan pet resources before creating the controller so the controller can
+  // pick a valid petId from the registry on construction.
+  const petRegistry = new PetRegistry();
+  await petRegistry.init({
+    appPath: path.join(__dirname, '..'),
+    userDataPath: path.join(app.getPath('appData'), 'MemoryPet'),
+  });
+
   createWindows();
 
   // Start the autonomous-movement state machine. Created here (after the
   // pet window exists) so it has a window reference to translate.
-  petController = new PetController({ winPet, db });
+  petController = new PetController({ winPet, db, petRegistry });
   petController.start();
 
   ipc.register({
@@ -172,6 +181,7 @@ app.whenReady().then(async () => {
     getPetState,
     setActiveReminder,
     petController,
+    petRegistry,
   });
 
   scheduler.start({
@@ -182,6 +192,7 @@ app.whenReady().then(async () => {
     getPetState,
     setPetState,
     setActiveReminder,
+    petController,
   });
 
   app.on('activate', () => {

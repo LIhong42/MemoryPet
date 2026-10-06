@@ -3,20 +3,17 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <!-- pet window CSP: allow `file:` for img-src so the <img> can load
+       PNG frames directly from the disk via pathToFileURL(). `style-src
+       'unsafe-inline'` keeps the existing inline styles in pet.css. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file: data:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
   <title>MemoryPet Pet</title>
   <link rel="stylesheet" href="css/pet.css" />
 </head>
 <body>
   <div class="pet-root" id="pet-root">
-    <div class="pet-sprite" id="pet-sprite" data-state="NORMAL" data-species="cat" data-action="idle">
-      <div class="svg-stage" id="stage-cat"></div>
-      <div class="svg-stage hidden" id="stage-dog"></div>
-      <div class="svg-stage hidden" id="stage-bird"></div>
-      <div class="svg-stage hidden" id="stage-miku"></div>
-
-      <!-- ZZZ badge shown while sleeping -->
-      <div class="zzz hidden" id="zzz-badge">Z<span>z</span><span>z</span></div>
+    <div class="pet-sprite" id="pet-sprite" data-state="NORMAL" data-pet="" data-action="default" data-direction="right">
+      <img id="pet-frame" class="pet-frame" alt="" draggable="false" />
     </div>
 
     <!-- Reminder badge (corner count) + speech bubble above the sprite -->

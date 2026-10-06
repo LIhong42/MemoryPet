@@ -1,4 +1,8 @@
-/* src/css/pet.css */
+/* src/css/pet.css — frame-animation pet window.
+   Pet is a single <img id="pet-frame"> whose src cycles through PNG frames
+   sent by the main process. CSS handles REMINDER shake, idle bob, and the
+   reminder badge/bubble UI bits.
+*/
 :root { --size: 220px; }
 html, body {
   margin: 0; padding: 0;
@@ -22,82 +26,38 @@ html, body {
   display: flex; align-items: center; justify-content: center;
   position: relative;
   transform-origin: center bottom;
-  /* Default: gentle idle bob. Action-specific animations are layered on top. */
+  /* Default: gentle idle bob. REMINDER state overrides below. */
   animation: bob 3.2s ease-in-out infinite;
 }
 .pet-sprite.dragging {
   animation: none !important;
   cursor: grabbing;
 }
-.pet-sprite svg { filter: drop-shadow(0 4px 8px rgba(0,0,0,0.18)); }
 
-/* REMINDER state: shake + red glow + softer bob (already shaken). */
+.pet-frame {
+  width: var(--size);
+  height: var(--size);
+  object-fit: contain;
+  filter: drop-shadow(0 4px 8px rgba(0,0,0,0.18));
+  image-rendering: -webkit-optimize-contrast;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* Direction: flip the sprite horizontally when walking left. */
+.pet-sprite[data-direction="left"] .pet-frame { transform: scaleX(-1); }
+
+/* REMINDER state: shake + red glow. */
 .pet-sprite[data-state="REMINDER"] {
   animation: shake 0.4s linear infinite;
 }
-.pet-sprite[data-state="REMINDER"] svg { filter: drop-shadow(0 0 12px #ff5252) drop-shadow(0 4px 8px rgba(0,0,0,0.2)); }
-
-/* Species stages: stack them and let CSS toggle visibility. */
-.svg-stage {
-  position: absolute;
-  inset: 0;
-  display: flex; align-items: center; justify-content: center;
-}
-.svg-stage.hidden { display: none; }
-
-/* ---- Action-driven animations ---- */
-/* While walking: small stepping bob with a directional lean. The walk
-   direction is communicated via data-action-direction on the sprite (left/right). */
-.pet-sprite[data-action="walking"] {
-  animation: walk-bob 0.55s ease-in-out infinite;
-}
-.pet-sprite[data-action="walking"][data-direction="left"] svg { transform: scaleX(-1); }
-.pet-sprite[data-action="walking"] .leg {
-  transform-origin: 50% 0;
-  animation: leg-swing 0.55s ease-in-out infinite;
-}
-.pet-sprite[data-action="walking"] .leg-r {
-  animation-delay: 0.28s;
-}
-.pet-sprite[data-action="walking"] .tail {
-  transform-origin: 50% 100%;
-  animation: tail-wag 0.45s ease-in-out infinite;
-}
-.pet-sprite[data-action="walking"] .wing {
-  transform-origin: 50% 50%;
-  animation: wing-flap 0.32s ease-in-out infinite;
-}
-
-/* While jumping: short parabola. The pet window is moved by the main
-   process; we add a slight squish on landing. */
-.pet-sprite[data-action="jumping"] {
-  animation: jump-stretch 0.7s ease-out infinite;
-}
-
-/* While sleeping: slower breathing bob; SVG eyes are swapped to closed
-   by pet.js. */
-.pet-sprite[data-action="sleeping"] {
-  animation: sleep-breathe 3s ease-in-out infinite;
+.pet-sprite[data-state="REMINDER"] .pet-frame {
+  filter: drop-shadow(0 0 12px #ff5252) drop-shadow(0 4px 8px rgba(0,0,0,0.2));
 }
 
 @keyframes bob {
   0%, 100% { transform: translateY(0); }
   50%      { transform: translateY(-6px); }
-}
-@keyframes walk-bob {
-  0%, 100% { transform: translateY(0); }
-  50%      { transform: translateY(-3px); }
-}
-@keyframes sleep-breathe {
-  0%, 100% { transform: translateY(0) scale(1); }
-  50%      { transform: translateY(-2px) scale(1.02); }
-}
-@keyframes jump-stretch {
-  0%   { transform: translateY(0)    scaleY(0.95); }
-  20%  { transform: translateY(-2px) scaleY(1.08); }
-  50%  { transform: translateY(0)    scaleY(1.02); }
-  80%  { transform: translateY(-1px) scaleY(0.98); }
-  100% { transform: translateY(0)    scaleY(1); }
 }
 @keyframes shake {
   0%, 100% { transform: translateX(0) translateY(0); }
@@ -105,293 +65,6 @@ html, body {
   40% { transform: translateX(3px) translateY(-3px); }
   60% { transform: translateX(-2px) translateY(-1px); }
   80% { transform: translateX(2px) translateY(-2px); }
-}
-@keyframes leg-swing {
-  0%, 100% { transform: rotate(-12deg); }
-  50%      { transform: rotate(12deg); }
-}
-@keyframes tail-wag {
-  0%, 100% { transform: rotate(-10deg); }
-  50%      { transform: rotate(15deg); }
-}
-@keyframes wing-flap {
-  0%, 100% { transform: scaleY(1)    translateY(0); }
-  50%      { transform: scaleY(0.55) translateY(-2px); }
-}
-
-/* Bird-specific idle: subtle hover bob (faster than the default bob). */
-.pet-sprite[data-species="bird"] {
-  animation: bird-hover 1.6s ease-in-out infinite;
-}
-.pet-sprite[data-species="bird"][data-action="walking"] {
-  animation: bird-hover 0.9s ease-in-out infinite;
-}
-.pet-sprite[data-species="bird"][data-action="sleeping"] {
-  animation: bird-hover 4s ease-in-out infinite;
-}
-@keyframes bird-hover {
-  0%, 100% { transform: translateY(0)    rotate(-1deg); }
-  50%      { transform: translateY(-8px) rotate(1deg); }
-}
-
-/* =========================================================
-   Miku 专属动画
-   还原：青色双马尾、少女裙装、活泼可爱的角色
-   ---- 萌点设计 ----
-   * 待机：超慢的"呼吸感"垂直浮动（±3px / 3s），配合双马尾轻柔左右摆，
-     有"待机中也要动一动"的生命感
-   * 唱歌：头微歪 + 上下点头（不是僵硬左右摇），嘴巴开合幅度极小
-   * 挥手：右手轻抬上下摆动（不甩飞），头轻歪一笑
-   * 走路：小碎步节奏更慢更软，双马尾摆动更明显
-   * 跳跃：squash 拉伸 + 双马尾顺势飞起
-   * 睡觉：缓慢呼吸 + 头轻点
-   ========================================================= */
-
-/* Miku 默认 idle：轻柔呼吸感浮动 */
-.pet-sprite[data-species="miku"] {
-  animation: miku-idle 3.2s ease-in-out infinite;
-}
-/* Miku 完整显示 200×224 的 SVG（容器已经扩大到 220） */
-.pet-sprite[data-species="miku"] svg {
-  width: 200px;
-  height: 224px;
-  position: relative;
-  top: -12px;
-}
-/* 双马尾：头顶根部枢轴，左右轻柔摆动（带轻微重力感） */
-.pet-sprite[data-species="miku"] .twin-tail {
-  animation: miku-tail-sway 3.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-.pet-sprite[data-species="miku"] .twin-tail.tail-l { transform-origin: 60px 48px; }
-.pet-sprite[data-species="miku"] .twin-tail.tail-r { transform-origin: 140px 48px; }
-/* 仅 idle 状态下让右马尾稍微异步（左=0s, 右=0.4s 让动作有"层次"） */
-.pet-sprite[data-species="miku"][data-action="idle"] .twin-tail.tail-r,
-.pet-sprite[data-species="miku"]:not([data-action]) .twin-tail.tail-r { animation-delay: 0.4s; }
-/* 裙摆：裙腰枢轴，几乎不动（避免撕裂感） */
-.pet-sprite[data-species="miku"] .skirt {
-  transform-origin: 50% 0;
-  animation: miku-skirt-sway 3.2s ease-in-out infinite;
-}
-/* 刘海：额头枢轴，极轻飘动 */
-.pet-sprite[data-species="miku"] .bangs {
-  transform-origin: 50% 100%;
-  animation: miku-bangs 4s ease-in-out infinite;
-}
-/* 头部：脖子根部枢轴（不歪头） */
-.pet-sprite[data-species="miku"] .head-group {
-  transform-origin: 100px 124px;
-}
-
-/* ---- 走路：小碎步，整体几乎不晃 ---- */
-.pet-sprite[data-species="miku"][data-action="walking"] {
-  animation: miku-walk-bob 0.55s ease-in-out infinite;
-}
-.pet-sprite[data-species="miku"][data-action="walking"] .twin-tail {
-  animation: miku-tail-run 0.55s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-.pet-sprite[data-species="miku"][data-action="walking"] .leg-l {
-  transform-origin: 86px 188px;
-  animation: miku-leg-walk 0.55s ease-in-out infinite;
-}
-.pet-sprite[data-species="miku"][data-action="walking"] .leg-r {
-  transform-origin: 114px 188px;
-  animation: miku-leg-walk 0.55s ease-in-out infinite;
-  animation-delay: 0.275s;
-}
-.pet-sprite[data-species="miku"][data-action="walking"] .arm-l {
-  transform-origin: 76px 126px;
-  animation: miku-arm-walk 0.55s ease-in-out infinite;
-}
-.pet-sprite[data-species="miku"][data-action="walking"] .arm-r {
-  transform-origin: 124px 126px;
-  animation: miku-arm-walk 0.55s ease-in-out infinite;
-  animation-delay: 0.275s;
-}
-
-/* ---- 跳跃：squash & stretch ---- */
-.pet-sprite[data-species="miku"][data-action="jumping"] {
-  animation: miku-jump 0.7s ease-out infinite;
-}
-.pet-sprite[data-species="miku"][data-action="jumping"] .twin-tail {
-  animation: miku-tail-jump 0.7s ease-in-out infinite;
-}
-
-/* ---- 睡觉：闭眼 + 缓慢呼吸 + 头轻点 ---- */
-.pet-sprite[data-species="miku"][data-action="sleeping"] {
-  animation: miku-sleep-bob 3.5s ease-in-out infinite;
-}
-.pet-sprite[data-species="miku"][data-action="sleeping"] .head-group {
-  animation: miku-head-nod 3.5s ease-in-out infinite;
-}
-.pet-sprite[data-species="miku"][data-action="sleeping"] .twin-tail {
-  animation: miku-tail-sleep 3.5s ease-in-out infinite;
-}
-
-/* ---- 唱歌：上下点头 + 双马尾大幅摆动 + 音符飘动 ---- */
-.pet-sprite[data-species="miku"][data-action="sing"] {
-  animation: miku-sing-bob 0.6s ease-in-out infinite;
-}
-/* 头部：点头（不是左右摇）—— 萌的关键 */
-.pet-sprite[data-species="miku"][data-action="sing"] .head-group {
-  animation: miku-head-nod 0.6s ease-in-out infinite;
-}
-.pet-sprite[data-species="miku"][data-action="sing"] .twin-tail {
-  animation: miku-tail-sing 0.6s ease-in-out infinite;
-}
-.pet-sprite[data-species="miku"][data-action="sing"] .music-notes text {
-  animation: miku-note-rise 1.4s ease-in-out infinite;
-}
-.pet-sprite[data-species="miku"][data-action="sing"] .music-notes text:nth-child(2) {
-  animation-delay: 0.45s;
-}
-.pet-sprite[data-species="miku"][data-action="sing"] .music-notes text:nth-child(3) {
-  animation-delay: 0.9s;
-}
-
-/* ---- 挥手：右手抬起摆动 + 头轻歪一笑 ---- */
-.pet-sprite[data-species="miku"][data-action="wave"] {
-  animation: miku-wave-bob 1s ease-in-out infinite;
-}
-.pet-sprite[data-species="miku"][data-action="wave"] .arm-r {
-  transform-origin: 124px 126px;
-  animation: miku-wave-arm 0.7s ease-in-out infinite;
-}
-.pet-sprite[data-species="miku"][data-action="wave"] .head-group {
-  animation: miku-head-tilt 1.4s ease-in-out infinite;
-}
-.pet-sprite[data-species="miku"][data-action="wave"] .bangs {
-  animation: miku-bangs-wave 0.7s ease-in-out infinite;
-}
-
-/* ---- 所有 keyframes ---- */
-
-/* Idle: 缓慢"呼吸感"上下浮动（3.2s 周期，幅度仅 3px）*/
-@keyframes miku-idle {
-  0%, 100% { transform: translateY(0); }
-  50%      { transform: translateY(-3px); }
-}
-@keyframes miku-walk-bob {
-  0%, 100% { transform: translateY(0); }
-  50%      { transform: translateY(-2.5px); }
-}
-/* 睡觉：缓慢呼吸 + 微下沉 */
-@keyframes miku-sleep-bob {
-  0%, 100% { transform: translateY(0)    scale(1); }
-  50%      { transform: translateY(-1.5px) scale(1.012); }
-}
-/* 唱歌：上下点头节奏（不是僵硬左右摇） */
-@keyframes miku-sing-bob {
-  0%, 100% { transform: translateY(0); }
-  25%      { transform: translateY(-1.5px); }
-  50%      { transform: translateY(0); }
-  75%      { transform: translateY(-1.5px); }
-}
-/* 挥手：上下浮动 */
-@keyframes miku-wave-bob {
-  0%, 100% { transform: translateY(0); }
-  50%      { transform: translateY(-2px); }
-}
-@keyframes miku-jump {
-  0%   { transform: translateY(0)    scaleY(0.96); }
-  20%  { transform: translateY(-2px) scaleY(1.06); }
-  50%  { transform: translateY(0)    scaleY(1.01); }
-  80%  { transform: translateY(-1px) scaleY(0.99); }
-  100% { transform: translateY(0)    scaleY(1); }
-}
-
-/* 双马尾：幅度比之前小，节奏更"软"（cubic-bezier 给重力感） */
-@keyframes miku-tail-sway {
-  0%, 100% { transform: rotate(-3deg); }
-  50%      { transform: rotate(3deg); }
-}
-@keyframes miku-tail-run {
-  0%, 100% { transform: rotate(-6deg); }
-  50%      { transform: rotate(6deg); }
-}
-@keyframes miku-tail-jump {
-  0%, 100% { transform: rotate(-8deg); }
-  50%      { transform: rotate(8deg); }
-}
-@keyframes miku-tail-sleep {
-  0%, 100% { transform: rotate(1deg); }
-  50%      { transform: rotate(-1deg); }
-}
-@keyframes miku-tail-sing {
-  0%, 100% { transform: rotate(-8deg); }
-  50%      { transform: rotate(8deg); }
-}
-
-/* 走路：腿/臂小幅前后摆动（不甩飞）*/
-@keyframes miku-leg-walk {
-  0%, 100% { transform: rotate(-6deg); }
-  50%      { transform: rotate(6deg); }
-}
-@keyframes miku-arm-walk {
-  0%, 100% { transform: rotate(-8deg); }
-  50%      { transform: rotate(8deg); }
-}
-
-/* 裙摆：左右轻摆（幅度小到几乎不动） */
-@keyframes miku-skirt-sway {
-  0%, 100% { transform: skewX(-0.8deg); }
-  50%      { transform: skewX(0.8deg); }
-}
-
-/* 刘海：轻微飘动（额头枢轴） */
-@keyframes miku-bangs {
-  0%, 100% { transform: translateY(0)    rotate(0deg); }
-  50%      { transform: translateY(-0.4px) rotate(0.6deg); }
-}
-@keyframes miku-bangs-wave {
-  0%, 100% { transform: translateY(0)    rotate(0deg); }
-  50%      { transform: translateY(-0.8px) rotate(1.2deg); }
-}
-
-/* 点头（唱歌 / 睡觉）：上下点头，不是左右摇 —— 萌的关键 */
-@keyframes miku-head-nod {
-  0%, 100% { transform: rotate(-1.5deg); }
-  50%      { transform: rotate(1.5deg); }
-}
-/* 挥手：头部轻歪 */
-@keyframes miku-head-tilt {
-  0%, 100% { transform: rotate(-2deg); }
-  50%      { transform: rotate(2deg); }
-}
-
-/* 挥手：右手抬起小幅度上下摆动（不甩飞） */
-@keyframes miku-wave-arm {
-  0%, 100% { transform: rotate(-10deg); }
-  50%      { transform: rotate(-22deg); }
-}
-
-/* 音符飘动 */
-@keyframes miku-note-rise {
-  0%   { opacity: 0; transform: translateY(0)   scale(0.6); }
-  20%  { opacity: 1; transform: translateY(-4px) scale(1); }
-  100% { opacity: 0; transform: translateY(-14px) scale(1.1); }
-}
-
-/* ---- Sleep badge ("zzz") ---- */
-.zzz {
-  position: absolute;
-  top: 8px;
-  right: 6px;
-  font: 700 14px sans-serif;
-  color: #6b6b6b;
-  pointer-events: none;
-  animation: zzz-rise 2.4s ease-in-out infinite;
-}
-.zzz.hidden { display: none; }
-.zzz span {
-  display: inline-block;
-  font-size: 11px;
-  margin-left: 1px;
-  opacity: 0.7;
-}
-@keyframes zzz-rise {
-  0%   { opacity: 0;   transform: translate(0,    0)  scale(0.8); }
-  20%  { opacity: 1;   transform: translate(-2px, -4px) scale(1); }
-  100% { opacity: 0;   transform: translate(6px, -14px) scale(1.2); }
 }
 
 /* ---- Reminder count badge (top-right corner) ---- */

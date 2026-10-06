@@ -1,10 +1,24 @@
 // src/js/pages/contact_detail.js — view a single contact + their dates + events
-import { api, escapeHtml, firstChar, displayName, eventKindAttr, contactColorIndex, fmtDate, fmtDateTime, formatRelative, countdownTo, categoryIcon, toast } from '../api.js';
+import { api, escapeHtml, firstChar, displayName, eventKindAttr, contactColorIndex, fmtDate, fmtDateTime, formatRelative, countdownTo, categoryIcon, toast, getCachedAvatarDataUrl, fetchAvatarDataUrl, wireDateInputs } from '../api.js';
+import { iconSVG, suggestIconKind } from '../icons.js';
 import { register, navigate } from '../router.js';
 import {
   bulkEnterLinkHtml, bulkToolbarHtml,
   wireBulkEnter, wireBulkToolbar,
 } from '../bulk_delete.js';
+
+// Render the avatar block for the detail-page header. Mirrors the rule used
+// in contacts_list.js: prefer the user's uploaded photo (resolved to a data
+// URL via the avatar cache), otherwise a Lucide glyph picked from
+// `icon_kind` or auto-suggested from `relationship`.
+function detailAvatarHTML(c) {
+  const url = c.custom_avatar_path ? getCachedAvatarDataUrl(c.id) : '';
+  if (url) return `<img src="${escapeHtml(url)}" alt=""/>`;
+  const name = c.icon_kind && c.icon_kind !== 'user'
+    ? c.icon_kind
+    : suggestIconKind(c.relationship);
+  return iconSVG(name, { title: displayName(c), size: 32 });
+}
 
 // --- List section with search + event filter + pagination -----------------
 //
@@ -97,36 +111,18 @@ function sortByEventDesc(items) {
 
 function renderItemRow(it) {
   return `
-    <div class="row between">
-      <div>
-        <div>${escapeHtml(it.description || '')}</div>
+    <div class="row between attribute-clickable" data-id="${escapeHtml(it.id)}" style="cursor:pointer;">
+      <div style="flex:1; min-width:0;">
+        <div class="lr-title-main">${escapeHtml(it.description || '')}</div>
         ${it.event ? `<div class="meta">${escapeHtml(fmtDate(it.event))}</div>` : ''}
-      </div>
-      <div class="row" style="gap:6px">
-        <button type="button" class="icon-btn section-edit" data-id="${escapeHtml(it.id)}" title="编辑">✎</button>
-        <button type="button" class="icon-btn section-del"  data-id="${escapeHtml(it.id)}" title="删除">✕</button>
       </div>
     </div>
   `;
 }
 
-// Inline editor row replacing a row when its id matches `state.editingId`.
-// Description + event inputs; Save calls api.attributes.update; Cancel
-// just clears the editing id and re-renders.
-function renderEditRow(it) {
-  return `
-    <div class="row between">
-      <div style="flex:1">
-        <input type="text" class="section-edit-desc" value="${escapeHtml(it.description || '')}" autofocus/>
-        <input type="date" class="section-edit-event" value="${escapeHtml(it.event || '')}" style="margin-top:4px"/>
-      </div>
-      <div class="row" style="gap:6px">
-        <button type="button" class="btn section-edit-save" data-id="${escapeHtml(it.id)}">保存</button>
-        <button type="button" class="btn secondary section-edit-cancel">取消</button>
-      </div>
-    </div>
-  `;
-}
+// Inline editor row is no longer used: each row click navigates to the
+// dedicated `/attributes/:id` detail page where edits happen. Kept the
+// `editingId` field in state for backward-compat no-op behaviour.
 
 function renderPager(state, totalPages) {
   if (totalPages <= 1) return '';
@@ -165,7 +161,7 @@ function renderListSection(title, items, state, kind, c) {
   // normal row. All other rows render as before. In bulk-select mode we
   // additionally prefix each row with a checkbox.
   const rowsHtml = visible.map((it) => {
-    const inner = state.editingId === it.id ? renderEditRow(it) : renderItemRow(it);
+    const inner = renderItemRow(it);
     if (selectActive) {
       return `
         <div class="row" style="gap:10px; padding:6px 0;">
@@ -234,6 +230,10 @@ async function render(args) {
   const app = document.getElementById('app');
   app.innerHTML = `<div class="empty">载入中…</div>`;
   const c = await api.contacts.get(args.id);
+  // Warm the avatar data URL cache so the header photo paints on the same
+  // tick as the rest of the page (the first IPC populates the cache; the
+  // second paint uses the cached value).
+  if (c.custom_avatar_path) fetchAvatarDataUrl(c.id);
   const [dates, events, memorial, likes, taboos, gifts] = await Promise.all([
     api.importantDates.list(args.id),
     api.events.list({ contact_id: args.id }),
@@ -285,27 +285,94 @@ async function render(args) {
     }
   }
 
+  // Repaint only the rows + pager for one section, leaving the search
+  // <input> mounted. Used by the search handler - the live input must
+  // NEVER be replaced, or the Chinese IME composition context breaks
+  // (typing "汉" drops the intermediate pinyin strokes, and even backspace
+  // drops the caret until the user re-clicks the box).
+  function rerenderListOnly(kind) {
+    const all = itemsByKind[kind] || [];
+    const state = sectionState[kind];
+    const q = state.query.trim().toLowerCase();
+    const filtered = all.filter((it) => matchesEither(it, q, state.eventFilter));
+    const ordered = (q || state.eventFilter) ? sortByEventDesc(filtered) : filtered;
+    const totalPages = Math.max(1, Math.ceil(ordered.length / PAGE_SIZE));
+    if (state.page >= totalPages) state.page = totalPages - 1;
+    if (state.page < 0) state.page = 0;
+    const start = state.page * PAGE_SIZE;
+    const visible = ordered.slice(start, start + PAGE_SIZE);
+    const filtersActive = !!(q || state.eventFilter);
+    const selectActive = !!state.selectModeActive;
+
+    const rowsHtml = visible.map((it) => {
+      const inner = renderItemRow(it);
+      if (selectActive) {
+        return `
+          <div class="row" style="gap:10px; padding:6px 0;">
+            <input type="checkbox" class="section-bulk-check" data-kind="${escapeHtml(kind)}" data-id="${escapeHtml(it.id)}" ${state.selected.has(it.id) ? 'checked' : ''}/>
+            <div style="flex:1; min-width:0;">${inner}</div>
+          </div>
+        `;
+      }
+      return inner;
+    }).join('');
+    const listHtml = visible.length
+      ? `<div class="card" data-kind="${escapeHtml(kind)}">${rowsHtml}</div>`
+      : (filtersActive
+          ? `<div class="empty">没有匹配的${kindTitle[kind]}</div>`
+          : `<div class="empty">还没有${kindTitle[kind]}</div>`);
+    const matchFooter = filtersActive
+      ? `<div class="meta" style="padding:6px 0">匹配 ${ordered.length} 条${q ? ' · 关键词：' + escapeHtml(state.query) : ''}${state.eventFilter ? ' · 事件：' + escapeHtml(state.eventFilter === '__none__' ? '未填事件' : state.eventFilter) : ''}</div>`
+      : '';
+    const pagerHtml = renderPager(state, totalPages);
+
+    const host = document.querySelector(`.list-host[data-kind="${kind}"]`);
+    if (!host) return;
+    // Preserve the live .filter-row <input>/<select>; replace everything
+    // after it. The input stays mounted and keeps its caret + IME state.
+    const filterRow = host.querySelector('.filter-row');
+    const tail = [listHtml, matchFooter, pagerHtml].filter(Boolean).join('');
+    if (filterRow) {
+      while (filterRow.nextSibling) filterRow.nextSibling.remove();
+      filterRow.insertAdjacentHTML('afterend', tail);
+    } else {
+      host.innerHTML = tail;
+    }
+    wirePager(kind);
+    wireBulkAfterSearch(kind);
+  }
+
   function wireSection(kind) {
     const input = document.querySelector(`.section-search[data-kind="${kind}"]`);
     if (input) {
-      input.oninput = (e) => {
-        sectionState[kind].query = e.target.value;
+      // The live <input> is NEVER replaced. We only repaint the rows /
+      // pager below it, so the IME composition context survives every
+      // keystroke (inputting "汉" no longer drops the intermediate pinyin
+      // strokes, and backspace works without re-clicking).
+      let settleTimer = null;
+      const apply = () => {
+        settleTimer = null;
+        sectionState[kind].query = input.value;
         sectionState[kind].page = 0; // reset to first page on new filter
-        rerenderSections();
-        const fresh = document.querySelector(`.section-search[data-kind="${kind}"]`);
-        if (fresh) {
-          fresh.focus();
-          const v = fresh.value;
-          fresh.setSelectionRange(v.length, v.length);
-        }
+        rerenderListOnly(kind);
       };
+      input.addEventListener('input', () => {
+        // 120ms debounce collapses IME composition bursts into one
+        // repaint. The input itself is not touched.
+        if (settleTimer) clearTimeout(settleTimer);
+        settleTimer = setTimeout(apply, 120);
+      });
+      input.addEventListener('compositionend', () => {
+        if (settleTimer) clearTimeout(settleTimer);
+        apply();
+      });
     }
     const select = document.querySelector(`.section-event-filter[data-kind="${kind}"]`);
     if (select) {
       select.onchange = (e) => {
         sectionState[kind].eventFilter = e.target.value;
         sectionState[kind].page = 0;
-        rerenderSections();
+        rerenderListOnly(kind);
       };
     }
     document.querySelectorAll(`.section-page[data-kind="${kind}"]`).forEach((btn) => {
@@ -317,131 +384,121 @@ async function render(args) {
         rerenderSections();
       };
     });
-    document.querySelectorAll(`.section-edit[data-kind="${kind}"]`).forEach((btn) => {
-      btn.onclick = () => {
-        sectionState[kind].editingId = btn.dataset.id;
-        sectionState[kind].page = 0; // jump to the row being edited
-        rerenderSections();
-        const fresh = document.querySelector(`.section-edit-desc`);
-        if (fresh) fresh.focus();
-      };
-    });
-    document.querySelectorAll(`.section-del[data-kind="${kind}"]`).forEach((btn) => {
-      btn.onclick = async () => {
-        if (!confirm('确认删除该条目？')) return;
-        try {
-          await api.attributes.delete(btn.dataset.id);
-          toast('已删除');
-        } catch (e) {
-          toast('删除失败：' + (e.message || e));
-          return;
-        }
-        sectionState[kind].editingId = null;
-        await refreshKind(kind);
-      };
-    });
-    document.querySelectorAll(`.section-edit-save`).forEach((btn) => {
-      btn.onclick = async () => {
-        const id = btn.dataset.id;
-        const card = btn.closest('.card');
-        if (!card) return;
-        const desc = card.querySelector('.section-edit-desc');
-        const ev = card.querySelector('.section-edit-event');
-        const description = desc ? desc.value.trim() : '';
-        if (!description) { toast('请填写描述'); if (desc) desc.focus(); return; }
-        const event = ev ? ev.value : '';
-        try {
-          await api.attributes.update(id, { description, event });
-          toast('已保存');
-        } catch (e) {
-          toast('保存失败：' + (e.message || e));
-          return;
-        }
-        sectionState[kind].editingId = null;
-        await refreshKind(kind);
-      };
-    });
-    document.querySelectorAll(`.section-edit-cancel`).forEach((btn) => {
-      btn.onclick = () => {
-        sectionState[kind].editingId = null;
-        rerenderSections();
-      };
-    });
-    // Bulk-select wiring (per-kind). Activated by the "批量删除" link in
-    // the section header; toggled off by the toolbar's "退出选择" button.
-    // We use a local Set state.selected, mutated by checkbox flips and
-    // cleared on exit / delete-confirmed.
-    const enterLink = document.querySelector(`.list-host[data-kind="${kind}"] [data-bulk-enter][data-kind="${kind}"]`);
-    if (enterLink) {
-      enterLink.onclick = (e) => {
+    wireRowClicks(kind);
+    wireBulkEnter(kind);
+    if (sectionState[kind].selectModeActive) wireBulkInSection(kind);
+  }
+
+  // Wire pager buttons for a single section (used after rerenderListOnly).
+  function wirePager(kind) {
+    document.querySelectorAll(`.section-page[data-kind="${kind}"]`).forEach((btn) => {
+      btn.onclick = (e) => {
         e.preventDefault();
-        sectionState[kind].selectModeActive = true;
+        const action = btn.dataset.action;
+        if (action === 'prev') sectionState[kind].page = Math.max(0, sectionState[kind].page - 1);
+        if (action === 'next') sectionState[kind].page = sectionState[kind].page + 1;
+        rerenderListOnly(kind);
+      };
+    });
+  }
+
+  // Wire row-click navigation for a single section.
+  function wireRowClicks(kind) {
+    if (sectionState[kind].selectModeActive) return;
+    document.querySelectorAll(`.list-host[data-kind="${kind}"] .attribute-clickable`).forEach((row) => {
+      row.onclick = () => navigate('/attributes/' + row.dataset.id);
+    });
+  }
+
+  // Wire the "进入批量删除" link in a section's header.
+  function wireBulkEnter(kind) {
+    const enterLink = document.querySelector(`.list-host[data-kind="${kind}"] [data-bulk-enter][data-kind="${kind}"]`);
+    if (!enterLink) return;
+    enterLink.onclick = (e) => {
+      e.preventDefault();
+      sectionState[kind].selectModeActive = true;
+      sectionState[kind].selected = new Set();
+      rerenderSections();
+    };
+  }
+
+  // Wire the bulk-select controls (toolbar + per-row checkboxes) for a
+  // section that's in select mode.
+  function wireBulkInSection(kind) {
+    const host = document.querySelector(`.list-host[data-kind="${kind}"]`);
+    if (!host) return;
+    const handlers = {
+      kindLabel: '条' + kindTitle[kind],
+      onDelete: async (ids) => {
+        const result = await api.attributes.deleteMany(ids);
+        sectionState[kind].selectModeActive = false;
+        sectionState[kind].selected = new Set();
+        toast(`已删除 ${result.deleted} 条${kindTitle[kind]}`);
+        await refreshKind(kind);
+        return result;
+      },
+      onExit: () => {
+        sectionState[kind].selectModeActive = false;
         sectionState[kind].selected = new Set();
         rerenderSections();
+      },
+    };
+    // Per-row checkbox flips — keep the Set in sync, then refresh the
+    // toolbar count without rebuilding the whole list (which would
+    // steal the user's focus).
+    host.querySelectorAll('.section-bulk-check').forEach((cb) => {
+      cb.onchange = () => {
+        const id = cb.dataset.id;
+        if (!id) return;
+        if (cb.checked) sectionState[kind].selected.add(id);
+        else sectionState[kind].selected.delete(id);
+        const t = host.querySelector('[data-bulk-toolbar]');
+        if (!t) return;
+        host.querySelectorAll('.section-bulk-check').forEach((rowCb) => {
+          const rid = rowCb.dataset.id;
+          if (!rid) return;
+          rowCb.checked = sectionState[kind].selected.has(rid);
+        });
+        const all = itemsByKind[kind] || [];
+        const qq = sectionState[kind].query.trim().toLowerCase();
+        const ef = sectionState[kind].eventFilter;
+        const total = all.filter((it) => matchesEither(it, qq, ef)).length;
+        t.outerHTML = bulkToolbarHtml({
+          count: sectionState[kind].selected.size,
+          total,
+          kindLabel: '条' + kindTitle[kind],
+        });
+        wireBulkToolbar(host, sectionState[kind], handlers);
       };
-    }
-    if (sectionState[kind].selectModeActive) {
-      const host = document.querySelector(`.list-host[data-kind="${kind}"]`);
-      // Per-row checkbox flips — keep the Set in sync, then refresh the
-      // toolbar count without rebuilding the whole list (which would
-      // steal the user's focus).
-      host.querySelectorAll('.section-bulk-check').forEach((cb) => {
-        cb.onchange = () => {
-          const id = cb.dataset.id;
-          if (!id) return;
-          if (cb.checked) sectionState[kind].selected.add(id);
-          else sectionState[kind].selected.delete(id);
-          const t = host.querySelector('[data-bulk-toolbar]');
-          if (!t) return;
-          // Compute the visible filtered count for the toolbar's "total"
-          // — matches what the user sees on this page right now.
-          const all = itemsByKind[kind] || [];
-          const qq = sectionState[kind].query.trim().toLowerCase();
-          const ef = sectionState[kind].eventFilter;
-          const total = all.filter((it) => matchesEither(it, qq, ef)).length;
-          t.outerHTML = bulkToolbarHtml({
-            count: sectionState[kind].selected.size,
-            total,
-            kindLabel: '条' + kindTitle[kind],
-          });
-          wireBulkToolbar(host, sectionState[kind], {
-            kindLabel: '条' + kindTitle[kind],
-            onDelete: handlers.onDelete,
-            onExit: handlers.onExit,
-          });
-        };
-      });
-      const handlers = {
-        kindLabel: '条' + kindTitle[kind],
-        onDelete: async (ids) => {
-          const result = await api.attributes.deleteMany(ids);
-          sectionState[kind].selectModeActive = false;
-          sectionState[kind].selected = new Set();
-          toast(`已删除 ${result.deleted} 条${kindTitle[kind]}`);
-          await refreshKind(kind);
-          return result;
-        },
-        onExit: () => {
-          sectionState[kind].selectModeActive = false;
-          sectionState[kind].selected = new Set();
-          rerenderSections();
-        },
-      };
-      wireBulkToolbar(host, sectionState[kind], handlers);
-    }
+    });
+    wireBulkToolbar(host, sectionState[kind], handlers);
+  }
+
+  // After rerenderListOnly: re-wire pager + bulk UI. Search input is NOT
+  // re-wired — it stays mounted and keeps its caret + IME state.
+  function wireBulkAfterSearch(kind) {
+    wirePager(kind);
+    if (sectionState[kind].selectModeActive) wireBulkInSection(kind);
   }
 
   app.innerHTML = `
-    <div class="row between">
-      <h1>${escapeHtml(displayName(c))}</h1>
-      <div>
-        <a class="inline-link" href="#/contacts/${escapeHtml(c.id)}/edit">编辑基本信息</a>
-        <a class="inline-link" style="margin-left:10px" href="#/contacts">← 返回</a>
+    <div class="contact-header">
+      <div class="contact-avatar contact-avatar-lg"
+           style="color: var(--contact-${contactColorIndex(c.name)})">
+        ${detailAvatarHTML(c)}
+      </div>
+      <div class="contact-header-text">
+        <h1>${escapeHtml(displayName(c))}${c.relationship
+          ? `<span class="relationship-sep">·</span><span class="relationship">${escapeHtml(c.relationship)}</span>`
+          : ''}</h1>
+        <div class="contact-header-actions">
+          <a class="inline-link" href="#/contacts/${escapeHtml(c.id)}/edit">编辑基本信息</a>
+          <a class="inline-link" href="#/contacts">← 返回</a>
+        </div>
       </div>
     </div>
     <div class="card" data-contact-color="${contactColorIndex(c.name)}">
       <div class="row" style="gap:24px">
-        ${c.relationship ? `<div><div class="meta">关系</div>${escapeHtml(c.relationship)}</div>` : ''}
         <div><div class="meta">条目统计</div>${likes.length} 喜好 / ${taboos.length} 忌讳 / ${gifts.length} 礼物</div>
       </div>
     </div>
@@ -464,7 +521,7 @@ async function render(args) {
                    : d.kind === 'anniversary' ? '💝'
                    : '📅';
         return `
-        <div class="card list-row" data-kind="important">
+        <div class="card list-row clickable" data-kind="important" data-important="${escapeHtml(d.id)}">
           <div class="lr-id">
             <span class="cat-icon" data-tone="${kindTone}">${icon}</span>
           </div>
@@ -474,7 +531,6 @@ async function render(args) {
           </div>
           <div class="lr-side">
             <div class="time-chip"><span class="chip-dot"></span>每年 ${d.month}-${d.day}</div>
-            <button class="icon-btn" data-del-date="${escapeHtml(d.id)}" title="删除">✕</button>
           </div>
         </div>
       `}).join('')}
@@ -533,17 +589,11 @@ async function render(args) {
   document.getElementById('add-event').onclick = () => navigate('/events/new?category=general&contact_id=' + args.id);
   const addMemorial = document.getElementById('add-memorial');
   if (addMemorial) addMemorial.onclick = () => navigate('/events/new?category=memorial&contact_id=' + args.id);
-  app.querySelectorAll('[data-del-date]').forEach((el) => {
-    el.onclick = async () => {
-      if (!confirm('删除该重要日期？')) return;
-      await api.importantDates.delete(el.dataset.delDate);
-      toast('已删除');
-      render(args);
-    };
-  });
   app.querySelectorAll('.card.clickable').forEach((el) => {
     el.onclick = () => {
-      if (el.dataset.memorial) {
+      if (el.dataset.important) {
+        navigate('/important-dates/' + el.dataset.important);
+      } else if (el.dataset.memorial) {
         navigate('/events/' + el.dataset.memorial + '?category=memorial');
       } else if (el.dataset.id) {
         navigate('/events/' + el.dataset.id + '?category=' + (el.dataset.category || 'general'));
@@ -591,6 +641,8 @@ function showDateDialog(contactId) {
     </div>
   `;
   document.body.appendChild(modal);
+  // Click anywhere on the time input to open the time picker.
+  wireDateInputs(modal);
   modal.querySelector('#x').onclick = () => modal.remove();
   modal.querySelector('#cancel').onclick = () => modal.remove();
   modal.querySelector('#save').onclick = async () => {

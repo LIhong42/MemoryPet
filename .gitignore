@@ -62,3 +62,10 @@ coverage/
 *.tgz
 .eslintcache
 .prettiercache
+
+# Pet asset binaries live in resources/pets/<id>/. Track only the
+# manifest.json describing each pet; PNG frames are kept locally and shipped
+# via electron-builder's extraResources. To regenerate from upstream vup
+# sources, drop frames under resources/pets/<id>/ manually.
+# info.lps is also legacy metadata we don't read; ignore it too.
+resources/pets/

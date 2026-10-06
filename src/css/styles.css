@@ -163,6 +163,39 @@ input:focus, select:focus, textarea:focus {
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
 textarea { min-height: 80px; resize: vertical; }
+
+/* Date / time pickers — the whole input is clickable, not just the tiny
+   trailing icon. Slightly taller than other inputs and with a soft hover
+   background so users discover they can click anywhere inside. */
+input[type="date"], input[type="time"], input[type="datetime-local"] {
+  min-height: 38px;
+  padding: 8px 12px;
+  cursor: pointer;
+  background-color: #fafbfc;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+input[type="date"]:hover,
+input[type="time"]:hover,
+input[type="datetime-local"]:hover {
+  background-color: var(--accent-soft, #eef3ff);
+  border-color: var(--accent);
+}
+/* Hide the native ::-webkit-calendar-picker-indicator gutter icon's reduced
+   hit area: enlarge its clickable region so even when the OS limits the
+   clickable surface, the whole input accepts them. */
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.7;
+  padding: 4px;
+  margin-left: 4px;
+}
+input[type="date"]::-webkit-calendar-picker-indicator:hover,
+input[type="time"]::-webkit-calendar-picker-indicator:hover,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+}
 label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; margin-top: 10px; }
 .field { margin-bottom: 10px; }
 .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -662,6 +695,95 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
   min-width: 92px;          /* reserve so a short "明天 09:00" still anchors */
 }
 
+/* ---- Memorial-event row layout (revised 2026-10-07) ----
+   Override the default `.list-row` three-column grid with a three-block
+   layout that matches the user request:
+     column 1: title (with kind tag)        — leftmost
+     column 2: contact names + relative time — middle, on a single row
+     column 3: up to two photo thumbnails    — right edge
+   Contact names share the title's font weight/size so the row reads as
+   one horizontal strip instead of "big title / small subtitle". The avatar
+   glyph in front of the contact name was removed — the title column
+   already carries the category icon, so a second avatar just added noise. */
+.memorial-row {
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.2fr) auto;
+  gap: 16px;
+  align-items: center;
+}
+.memorial-row .mr-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.memorial-row .mr-title .cat-icon {
+  width: 32px;
+  height: 32px;
+  font-size: 16px;
+  border-radius: 8px;
+}
+.memorial-row .mr-title .lr-title {
+  flex: 1;
+  min-width: 0;
+}
+.memorial-row .mr-mid {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.memorial-row .contact-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.memorial-row .contact-time {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.memorial-row .mr-thumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.memorial-row .thumb-stack {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.memorial-row .thumb {
+  width: 44px;
+  height: 44px;
+  border-radius: 6px;
+  margin-left: 0;
+  border: 1px solid var(--border);
+  background: var(--accent-soft);
+  object-fit: cover;
+}
+.memorial-row .thumb-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: 14px;
+  background: var(--accent-soft);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
 /* Category glyph — a soft-tinted rounded square holding the emoji.
    Background echoes the data-kind color at low opacity so the row reads
    as belonging to a category without competing with the title. */
@@ -756,3 +878,186 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
 /* For rows without a left identifier, drop the leading column.
    Used by 联系人 list and others that already have a chunky left block. */
 .list-row.no-id { grid-template-columns: minmax(0, 1fr) auto; }
+
+/* ---- List-row two-tier content ----
+   Some lists (e.g. /likes, /taboos, /gifts) want both a header line and a
+   prominent content line in the middle column. `.lr-title` is reserved for
+   the upper "header" — contact name + date — and `.lr-title-main` carries
+   the actual content the user came to read (description, label, etc).
+   Both lines share the same font weight/size so they read as one block
+   instead of a "title + faded meta" hierarchy. */
+.lr-title-main {
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Inline meta right next to the row's primary title — used for date
+   suffixes on the contact-name line. Smaller and muted so the title
+   itself stays the focal point. */
+.lr-meta-inline {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  margin-left: 2px;
+}
+/* Created-at timestamp pinned to the right edge of an attribute list row.
+   Same font size / weight as the description so the eye reads it as part of
+   the row content rather than a faint accessory. */
+.lr-created-at {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+/* Attribute-row middle column: override the default column flex so the
+   contact name and the description sit on a single line instead of stacked.
+   The contact name is fixed-width via flex-shrink:0; the description takes
+   the remaining space and ellipsises on overflow. The selector matches the
+   specificity of `.list-row .lr-main` so it actually wins the cascade. */
+.list-row .lr-main.lr-main-inline {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 10px;
+}
+.list-row .lr-main.lr-main-inline .lr-title {
+  flex-shrink: 0;
+  max-width: 30%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.list-row .lr-main.lr-main-inline .lr-title-main {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Clickable list rows that lead to a detail page. Mirrors `.card.clickable`
+   (lift + shadow on hover) but is scoped to the attribute-style rows that
+   share the same `.card` base — keeping the visual cue consistent across
+   the different list surfaces. */
+.list-row.clickable:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+.attribute-clickable:hover { background: var(--accent-soft); }
+.card .attribute-clickable { transition: background 180ms ease; }
+
+/* ---- Contact avatar (Lucide-style glyph) ----
+   The contact list, search, and detail-header all show a glyph block to the
+   left of the contact name. We render an inline SVG icon (icons.js) inside
+   this box. The box itself is a rounded rectangle — same proportions as
+   `.cat-icon` so the visual rhythm stays consistent across pages.
+
+   `color:` on the container drives both the SVG `stroke` (currentColor) and
+   the soft background tint (`color-mix(in srgb, var(--contact-N) 18%, …)`),
+   so the avatar naturally takes its palette tone from the existing
+   `--contact-N` variables without needing a parallel palette of `-soft`
+   swatches. Fallback: when `color:` is unset or invalid, the background
+   defaults to `--bg` so a broken icon row doesn't paint black. */
+.contact-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: color-mix(in srgb, currentColor 18%, transparent);
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.contact-avatar svg { width: 22px; height: 22px; display: block; }
+.contact-avatar img  { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* Larger avatar for the contact-detail header. Mirrors `.contact-avatar`
+   but is sized for prominence and uses 32px glyphs. */
+.contact-avatar-lg {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+}
+.contact-avatar-lg svg { width: 32px; height: 32px; }
+
+/* The avatar shown next to the picker in the editor — slightly bigger so
+   the user can preview their selection without zooming. */
+.contact-avatar-preview {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+}
+.contact-avatar-preview svg { width: 30px; height: 30px; }
+
+/* Contact-detail header layout. The avatar lives on the left; the name and
+   action links sit to its right. Replaces the older "row between" header
+   which kept the avatar off-screen and made relationship look like a
+   footnote of the name. */
+.contact-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.contact-header-text { flex: 1; min-width: 0; }
+.contact-header-text h1 {
+  margin: 0 0 6px 0;
+  font-size: 22px;
+  font-weight: 700;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0;
+}
+.contact-header-actions { display: flex; gap: 12px; }
+
+/* Relationship badge that appears next to the contact name (list row,
+   detail header, search row). Same font-size as the name so they read as
+   peers instead of "name + meta footnote". The `·` separator is muted to
+   break the two strings without visual shouting. */
+.lr-title .relationship,
+.contact-header-text .relationship {
+  color: var(--muted);
+  font-weight: 500;
+  margin-left: 2px;
+}
+.lr-title .relationship-sep,
+.contact-header-text .relationship-sep {
+  color: var(--muted);
+  margin: 0 6px;
+  font-weight: 400;
+}
+
+/* ---- Icon picker grid ----
+   Editor page lists every glyph as a tappable tile; the currently-selected
+   tile gets the accent border and soft accent background. Tile is 56×56 to
+   match the live preview avatar beside it — keeps the picker visually
+   balanced with the rest of the editor card. */
+.icon-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+.icon-grid .icon-cell {
+  width: 56px;
+  height: 56px;
+  border-radius: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  color: var(--text);
+  transition: border-color 120ms, background 120ms, color 120ms;
+  user-select: none;
+}
+.icon-grid .icon-cell:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.icon-grid .icon-cell.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.icon-grid .icon-cell svg {
+  width: 26px;
+  height: 26px;
+  display: block;
+}

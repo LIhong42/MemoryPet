@@ -22,7 +22,7 @@ function resolveName(input) {
   return legacy || '';
 }
 
-function register({ queue, winMain, winPet, setPetState, getPetState, setActiveReminder, petController }) {
+function register({ queue, winMain, winPet, setPetState, getPetState, setActiveReminder, petController, petRegistry }) {
   // ---- Contacts ----
   ipcMain.handle('contacts:list', () =>
     db.all('SELECT * FROM contacts WHERE listed = 1 ORDER BY updated_at DESC').map(db.parseContactRow));
@@ -39,12 +39,20 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
     const name = resolveName(input);
     const relationship = (input && typeof input.relationship === 'string' && input.relationship.trim())
       ? input.relationship.trim() : null;
+    // Avatar: `icon_kind` is a Lucide-style identifier (e.g. 'user', 'heart',
+    // 'briefcase'). `custom_avatar_path` is an absolute filesystem path to a
+    // user-uploaded image; null when the user is on the default glyph. Both
+    // are optional in `input` and fall back to schema defaults.
+    const iconKind = (input && typeof input.icon_kind === 'string' && input.icon_kind.trim())
+      ? input.icon_kind.trim() : 'user';
+    const customAvatar = (input && typeof input.custom_avatar_path === 'string' && input.custom_avatar_path.trim())
+      ? input.custom_avatar_path.trim() : null;
     db.run(
-      `INSERT INTO contacts(id, name, relationship,
+      `INSERT INTO contacts(id, name, relationship, icon_kind, custom_avatar_path,
                             likes_json, taboos_json, gifts_json,
                             listed, created_at, updated_at)
-       VALUES (?, ?, ?, '[]', '[]', '[]', 1, ?, ?)`,
-      [id, name, relationship, now, now]
+       VALUES (?, ?, ?, ?, ?, '[]', '[]', '[]', 1, ?, ?)`,
+      [id, name, relationship, iconKind, customAvatar, now, now]
     );
     const stored = db.one('SELECT * FROM contacts WHERE id = ?', [id]);
     const parsed = db.parseContactRow(stored);
@@ -57,9 +65,13 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
     const name = resolveName(input);
     const relationship = (input && typeof input.relationship === 'string' && input.relationship.trim())
       ? input.relationship.trim() : null;
+    const iconKind = (input && typeof input.icon_kind === 'string' && input.icon_kind.trim())
+      ? input.icon_kind.trim() : 'user';
+    const customAvatar = (input && typeof input.custom_avatar_path === 'string' && input.custom_avatar_path.trim())
+      ? input.custom_avatar_path.trim() : null;
     db.run(
-      `UPDATE contacts SET name=?, relationship=?, updated_at=? WHERE id=?`,
-      [name, relationship, now, id]
+      `UPDATE contacts SET name=?, relationship=?, icon_kind=?, custom_avatar_path=?, updated_at=? WHERE id=?`,
+      [name, relationship, iconKind, customAvatar, now, id]
     );
     const stored = db.one('SELECT * FROM contacts WHERE id = ?', [id]);
     const parsed = db.parseContactRow(stored);
@@ -75,6 +87,7 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
     //   * search_index rows (contact / event / important_date) — manual
     //   * reminder_acks for those events/dates               — manual
     //   * live reminder queue entries                        — manual
+    //   * the per-contact avatar file (if any)               — manual
     //
     // The "only contact" check is forward-compatible with a future
     // event_contacts many-to-many table — see db.deleteContactCascade.
@@ -82,9 +95,137 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
     // `queue` is passed in so the helper can prune active reminders without
     // reaching across modules. `updatePetState` is called afterwards so the
     // pet window's idle/active state reflects the (now smaller) queue.
+    deleteContactAvatarFile(id);
     const result = db.deleteContactCascade(id, queue);
     updatePetState({ queue, setPetState, setActiveReminder });
     return result;
+  });
+
+  // ---- Contact avatars ----
+  // Per-contact uploaded images live under <appData>/MemoryPet/avatars/.
+  // The on-disk filename is keyed by the contact id; the renderer retrieves
+  // a CSP-friendly data URL via `contacts:avatar_read` so the <img src=…>
+  // never has to reference a raw file path. `custom_avatar_path` in the DB
+  // stores the relative path so we can find the file later.
+  function getAvatarsDir() {
+    return path.join(app.getPath('appData'), 'MemoryPet', 'avatars');
+  }
+
+  // Resolve the on-disk path for a contact's avatar file. Returns null when
+  // the contact has no uploaded avatar (DB column is null) or when the file
+  // is missing on disk — both cases are treated identically by the caller.
+  function getContactAvatarPath(contactId) {
+    const row = db.one(
+      'SELECT custom_avatar_path FROM contacts WHERE id = ?',
+      [contactId]
+    );
+    if (!row || !row.custom_avatar_path) return null;
+    const rel = String(row.custom_avatar_path).replace(/\\/g, '/');
+    if (rel.includes('..') || path.isAbsolute(rel)) return null;
+    const full = path.join(getAvatarsDir(), rel);
+    if (!fs.existsSync(full)) return null;
+    return full;
+  }
+
+  // Wipe a contact's avatar file from disk. Silent on missing files so it's
+  // safe to call from delete handlers without race-checking existence.
+  function deleteContactAvatarFile(contactId) {
+    try {
+      const full = getContactAvatarPath(contactId);
+      if (full) fs.unlinkSync(full);
+    } catch (e) {
+      console.error('deleteContactAvatarFile failed:', e);
+    }
+  }
+
+  // Accept an uploaded image and persist it under avatars/<contact_id><ext>.
+  // We sanitize the original filename down to just an extension and use the
+  // contact id as the stable basename so subsequent uploads overwrite cleanly.
+  // The DB stores the *relative* path under avatars/, so the user-data dir
+  // can move (e.g. across machines via backup import) without breaking links.
+  ipcMain.handle('contacts:upload_avatar', (_e, contactId, input) => {
+    if (!contactId) throw new Error('contactId is required');
+    if (!input || !input.bytes) throw new Error('photo bytes required');
+    if (!db.one('SELECT id FROM contacts WHERE id = ?', [contactId])) {
+      throw new Error(`contact not found: ${contactId}`);
+    }
+    const mime = (input.mime || '').toLowerCase();
+    const allowed = {
+      'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif',
+      'image/webp': '.webp', 'image/bmp': '.bmp',
+    };
+    let ext = allowed[mime];
+    if (!ext) {
+      // Fall back to the original filename's extension, then to a generic
+      // .bin suffix. We never trust the renderer-decided mime alone.
+      const guessed = path.extname(input.filename || '').toLowerCase();
+      ext = allowed[({
+        '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+        '.png': 'image/png',  '.gif':  'image/gif',
+        '.webp': 'image/webp','.bmp':  'image/bmp',
+      }[guessed] || '')] || '.bin';
+    }
+    const avatarsDir = getAvatarsDir();
+    fs.mkdirSync(avatarsDir, { recursive: true });
+    // Drop any existing avatar file for this contact (different extension or
+    // not) so we never accumulate stale images. Best effort — failure is
+    // logged but doesn't abort the new upload.
+    try {
+      const existing = getContactAvatarPath(contactId);
+      if (existing) fs.unlinkSync(existing);
+    } catch (e) {
+      console.error('avatar overwrite cleanup failed:', e);
+    }
+    const filename = `${contactId}${ext}`;
+    const fullPath = path.join(avatarsDir, filename);
+    const buf = Buffer.from(input.bytes);
+    fs.writeFileSync(fullPath, buf);
+    const relPath = path.posix.join(filename);
+    const now = db.nowStr();
+    db.run(
+      `UPDATE contacts SET custom_avatar_path = ?, updated_at = ? WHERE id = ?`,
+      [relPath, now, contactId]
+    );
+    const stored = db.parseContactRow(db.one('SELECT * FROM contacts WHERE id = ?', [contactId]));
+    db.upsertSearch('contact', stored.id, db.buildContactBody(stored));
+    return stored;
+  });
+
+  // Read the contact's avatar (if any) as a base64 data URL so the renderer
+  // can drop it straight into <img src=…> without tripping the CSP. Returns
+  // { data_url, mime } or null when no avatar is set / the file is missing.
+  // Mirrors memorial_events:photo_read so we get the same render behaviour
+  // everywhere contact photos appear.
+  ipcMain.handle('contacts:avatar_read', (_e, contactId) => {
+    if (!contactId) return null;
+    const full = getContactAvatarPath(contactId);
+    if (!full) return null;
+    try {
+      const buf = fs.readFileSync(full);
+      const mime = ({
+        '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+        '.gif': 'image/gif',   '.webp': 'image/webp',  '.bmp': 'image/bmp',
+      }[path.extname(full).toLowerCase()] || 'application/octet-stream');
+      return { data_url: `data:${mime};base64,${buf.toString('base64')}` , mime };
+    } catch (e) {
+      console.error('avatar_read failed:', e);
+      return null;
+    }
+  });
+
+  // Drop the avatar file + clear the DB column. The renderer can immediately
+  // call contacts:get afterwards and the row will have custom_avatar_path=null.
+  ipcMain.handle('contacts:avatar_delete', (_e, contactId) => {
+    if (!contactId) throw new Error('contactId is required');
+    deleteContactAvatarFile(contactId);
+    const now = db.nowStr();
+    db.run(
+      `UPDATE contacts SET custom_avatar_path = NULL, updated_at = ? WHERE id = ?`,
+      [now, contactId]
+    );
+    const stored = db.parseContactRow(db.one('SELECT * FROM contacts WHERE id = ?', [contactId]));
+    db.upsertSearch('contact', stored.id, db.buildContactBody(stored));
+    return stored;
   });
 
   // ---- Contact attributes (likes / taboos / gifts — global table) ----
@@ -347,14 +488,18 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
       }
     }
     // Title is no longer required from the user — auto-fill from contact name
-    // or a generic placeholder so the row always has a non-empty display
-    // label.
+    // (with the tag_kind label, e.g. "刘杰的生日") or a generic placeholder
+    // so the row always has a non-empty display label.
     let title = (typeof input.title === 'string' ? input.title.trim() : '');
     if (!title) {
       if (input.contact_id) {
         const c = db.one('SELECT name FROM contacts WHERE id = ?', [input.contact_id]);
         if (c && c.name) {
-          title = `${c.name}的提醒`;
+          const suffix = tagKind === 'birthday'    ? '生日'
+                       : tagKind === 'anniversary' ? '纪念日'
+                       : tagKind === 'festival'    ? '节日'
+                       : '提醒';
+          title = `${c.name}的${suffix}`;
         }
       }
       if (!title) title = '新建提醒';
@@ -817,17 +962,63 @@ function normFreeText(s) {
     y: parseInt(db.getSetting('pet_y') || '200', 10),
   }));
 
+  // ---- Pet registry (frame-based) ----
+  // The renderer asks for the list of installed pets, the current petId, and
+  // resolves an animation variant to a concrete frame list. Frames are
+  // returned as file:// URLs the renderer can feed straight to <img src>.
+  if (petRegistry) {
+    ipcMain.handle('pet:list', () => petRegistry.list());
+    ipcMain.handle('pet:get_current', () => {
+      // Legacy migration: if pet_id is unset but pet_species is set (one of
+      // the old hard-coded species), fall back to the first registered pet
+      // and persist the new key on the way out.
+      if (!db.getSetting('pet_id') && db.getSetting('pet_species')) {
+        const first = petRegistry.list()[0];
+        if (first) {
+          db.setSetting('pet_id', first.id);
+          if (petController && petController.petId !== first.id) {
+            petController.petId = first.id;
+          }
+          return first.id;
+        }
+      }
+      return db.getSetting('pet_id') || (petRegistry.list()[0] && petRegistry.list()[0].id) || null;
+    });
+    ipcMain.handle('pet:set_current', (_e, id) => {
+      if (petController && typeof petController.setPetId === 'function') {
+        petController.setPetId(id);
+      } else {
+        db.setSetting('pet_id', id);
+      }
+      return true;
+    });
+    ipcMain.handle('pet:resolve_frames', (_e, petId, variant, direction) => {
+      try {
+        return petRegistry.resolveFrames({ petId, variant, direction });
+      } catch (err) {
+        console.error('[ipc] pet:resolve_frames failed:', err.message);
+        throw err;
+      }
+    });
+  }
+
   // ---- Pet species / walk toggle ----
-  // Both settings are persisted in the `settings` table and broadcast to the
-  // pet window so it can react immediately (species swap / animation stop).
-  // The PetController (main process) also reads them on construction.
+  // Legacy handlers kept for backwards compatibility with renderers that still
+  // call getSpecies/setSpecies. They map onto the new pet_id machinery: any
+  // of the four old species values picks the first installed pet.
   ipcMain.handle('pet:get_species', () => {
+    if (petRegistry) {
+      const cur = db.getSetting('pet_id') || (petRegistry.list()[0] && petRegistry.list()[0].id);
+      // Map back to a legacy token so older renderers don't break visually.
+      if (cur) return 'cat';
+    }
     const v = db.getSetting('pet_species');
     return (v === 'dog' || v === 'bird' || v === 'miku') ? v : 'cat';
   });
   ipcMain.handle('pet:set_species', (_e, species) => {
-    if (petController && typeof petController.setSpecies === 'function') {
-      petController.setSpecies(species);
+    if (petController && petRegistry) {
+      const cur = db.getSetting('pet_id') || (petRegistry.list()[0] && petRegistry.list()[0].id);
+      if (cur) petController.setPetId(cur);
     }
     return true;
   });
@@ -846,7 +1037,9 @@ function normFreeText(s) {
     return true;
   });
 
-  // Miku 专属：触发一次性动画（wave / sing），到时间后自动恢复到 idle。
+  // One-shot variant (replaces the old Miku-only wave/sing): emit an
+  // action-changed IPC for `ms` milliseconds, then the renderer restores
+  // the underlying state automatically.
   ipcMain.handle('pet:trigger_action', (_e, action, ms) => {
     if (petController && typeof petController.triggerOneShot === 'function') {
       petController.triggerOneShot(action, ms);

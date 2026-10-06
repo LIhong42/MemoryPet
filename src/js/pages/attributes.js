@@ -9,7 +9,8 @@
 // module-scoped object so it survives re-renders triggered by the
 // search input / inline form interactions.
 
-import { api, escapeHtml, firstChar, displayName, fmtDate, contactColorIndex, toast, todayYmd } from '../api.js';
+import { api, escapeHtml, firstChar, displayName, fmtDate, contactColorIndex, toast, todayYmd, wireDateInputs } from '../api.js';
+import { iconSVG, suggestIconKind } from '../icons.js';
 import { register, navigate } from '../router.js';
 import {
   bulkEnterLinkHtml, bulkToolbarHtml, bulkSelectableRowHtml,
@@ -31,13 +32,13 @@ const META = {
 // on/off without rebuilding the whole list.
 const state = {
   likes:  { items: [], contacts: [], query: '', contactId: '', editingId: null,
-            draftDescription: '', draftEvent: '', draftContactId: '', formOpen: false,
+            draftDescription: '', draftEvent: todayYmd(), draftContactId: '', formOpen: false,
             selectMode: { active: false, selected: new Set() } },
   taboos: { items: [], contacts: [], query: '', contactId: '', editingId: null,
-            draftDescription: '', draftEvent: '', draftContactId: '', formOpen: false,
+            draftDescription: '', draftEvent: todayYmd(), draftContactId: '', formOpen: false,
             selectMode: { active: false, selected: new Set() } },
   gifts:  { items: [], contacts: [], query: '', contactId: '', editingId: null,
-            draftDescription: '', draftEvent: '', draftContactId: '', formOpen: false,
+            draftDescription: '', draftEvent: todayYmd(), draftContactId: '', formOpen: false,
             selectMode: { active: false, selected: new Set() } },
 };
 
@@ -56,21 +57,18 @@ function clientFilter(items, q, contactId) {
 function renderRow(it) {
   const id = escapeHtml(it.id);
   const tone = contactColorIndex(it.contact_name);
+  const kind = suggestIconKind(it.contact_relationship);
   return `
-    <div class="card list-row attribute-row" data-id="${id}">
+    <div class="card list-row clickable attribute-row" data-id="${id}">
       <div class="lr-id">
-        <div class="avatar-lg" style="background: var(--contact-${tone})">${escapeHtml(firstChar(it.contact_name))}</div>
+        <div class="contact-avatar" style="color: var(--contact-${tone})">${iconSVG(kind, { title: it.contact_name })}</div>
       </div>
-      <div class="lr-main">
-        <div class="lr-title"><a class="inline-link" href="#/contacts/${escapeHtml(it.contact_id)}">${escapeHtml(displayName({ name: it.contact_name }))}</a></div>
-        <div class="lr-meta">${escapeHtml(it.description || '')}</div>
+      <div class="lr-main lr-main-inline">
+        <a class="inline-link lr-title" href="#/contacts/${escapeHtml(it.contact_id)}">${escapeHtml(displayName({ name: it.contact_name }))}</a>
+        <div class="lr-title-main">${escapeHtml(it.description || '')}</div>
       </div>
       <div class="lr-side">
-        ${it.event ? `<div class="time-chip"><span class="chip-dot"></span>${escapeHtml(fmtDate(it.event))}</div>` : ''}
-        <div class="row" style="gap:6px">
-          <button type="button" class="icon-btn attr-edit" data-id="${id}" title="编辑">✎</button>
-          <button type="button" class="icon-btn attr-del"  data-id="${id}" title="删除">✕</button>
-        </div>
+        <div class="lr-created-at">${escapeHtml(fmtDate(it.created_at))}</div>
       </div>
     </div>
   `;
@@ -112,12 +110,75 @@ function renderForm(state, meta, mode) {
   `;
 }
 
-function rerender(app, routeKey, meta) {
+// Re-render only the list+toolbar+section-header portion of the page.
+// Used by the search input — keeping the search input itself and the
+// filter dropdown outside the rewritten subtree means deleting a
+// character (or pressing backspace) inside a Chinese IME never tears down
+// the live input, so the IME composition context is preserved and the
+// caret / focus survive every keystroke.
+function rerenderList(routeKey, meta) {
   const s = state[routeKey];
   const filtered = clientFilter(s.items, s.query, s.contactId);
+  const hasActiveFilter = !!(s.query || s.contactId);
+  const selectActive = s.selectMode.active;
+
+  const contactsWithItems = s.items.length
+    ? Array.from(new Set(s.items.map((it) => it.contact_id)))
+        .map((cid) => ({ id: cid, name: (s.items.find((x) => x.contact_id === cid) || {}).contact_name || '' }))
+        .sort((a, b) => displayName(a).localeCompare(displayName(b), 'zh'))
+    : [];
+
+  const enterBulkLink = (!selectActive && filtered.length > 0) ? bulkEnterLinkHtml() : '';
+  const toolbar = selectActive
+    ? bulkToolbarHtml({ count: s.selectMode.selected.size, total: filtered.length, kindLabel: `${meta.title}条目` })
+    : '';
+
+  const host = document.getElementById('attr-list');
+  if (!host) return;
+  host.innerHTML = `
+    <div class="section-header">
+      <h2>
+        ${s.contactId
+          ? `${escapeHtml(displayName(contactsWithItems.find((c) => c.id === s.contactId) || { name: '' }))} 的${escapeHtml(meta.title)}`
+          : `所有${escapeHtml(meta.title)}`}
+        （${filtered.length}${hasActiveFilter ? ` / ${s.items.length}` : ''}）
+        ${enterBulkLink}
+      </h2>
+    </div>
+
+    ${toolbar}
+
+    ${filtered.length === 0
+      ? (s.items.length === 0
+          ? `<div class="empty">还没有${escapeHtml(meta.title)}条目 · 点右上「+ 新建」添加</div>`
+          : `<div class="empty">没有匹配的${escapeHtml(meta.title)}</div>`)
+      : filtered.map((it) => selectActive
+          ? bulkSelectableRowHtml(rowInner(it), it.id, s.selectMode.selected.has(it.id), meta.kind)
+          : renderRow(it)
+        ).join('')
+    }
+  `;
+
+  // Wire bulk-select controls that live inside the rewritten subtree.
+  // Only the "Enter" link is shown in idle mode; the toolbar's delete
+  // / exit buttons and per-row checkboxes are wired by the full
+  // rerender() below when select mode is active.
+  if (!selectActive) {
+    wireBulkEnter(host, () => {
+      s.selectMode.active = true;
+      s.selectMode.selected = new Set();
+      rerenderList(routeKey, meta);
+    });
+    host.querySelectorAll('.attribute-row').forEach((row) => {
+      row.onclick = () => navigate('/attributes/' + row.dataset.id);
+    });
+  }
+}
+
+function rerender(app, routeKey, meta) {
+  const s = state[routeKey];
   const noContacts = !s.contacts.length;
   const showForm = s.formOpen || s.editingId;
-  const hasActiveFilter = !!(s.query || s.contactId);
   const selectActive = s.selectMode.active;
 
   // Build contact dropdown options. Only include contacts that actually
@@ -132,23 +193,6 @@ function rerender(app, routeKey, meta) {
         })
         .sort((a, b) => displayName(a).localeCompare(displayName(b), 'zh'))
     : [];
-
-  // Header "进入批量删除" link — only shown in idle mode and only when
-  // there's at least one row to pick from. Inline next to the section
-  // title so the user can find it without hunting.
-  const enterBulkLink = (!selectActive && filtered.length > 0)
-    ? bulkEnterLinkHtml() : '';
-
-  // Toolbar pinned above the list while in select mode. The count is the
-  // number of currently-checked rows (NOT total filtered), so the user
-  // sees exactly what they're about to delete.
-  const toolbar = selectActive
-    ? bulkToolbarHtml({
-        count: s.selectMode.selected.size,
-        total: filtered.length,
-        kindLabel: `${meta.title}条目`,
-      })
-    : '';
 
   app.innerHTML = `
     <div class="row between">
@@ -171,45 +215,48 @@ function rerender(app, routeKey, meta) {
 
       ${showForm ? renderForm(s, meta) : ''}
 
-      <div class="section-header">
-        <h2>
-          ${s.contactId
-            ? `${escapeHtml(displayName(contactsWithItems.find((c) => c.id === s.contactId) || { name: '' }))} 的${escapeHtml(meta.title)}`
-            : `所有${escapeHtml(meta.title)}`}
-          （${filtered.length}${hasActiveFilter ? ` / ${s.items.length}` : ''}）
-          ${enterBulkLink}
-        </h2>
-      </div>
-
-      ${toolbar}
-
-      ${filtered.length === 0
-        ? (s.items.length === 0
-            ? `<div class="empty">还没有${escapeHtml(meta.title)}条目 · 点右上「+ 新建」添加</div>`
-            : `<div class="empty">没有匹配的${escapeHtml(meta.title)}</div>`)
-        : filtered.map((it) => selectActive
-            ? bulkSelectableRowHtml(rowInner(it), it.id, s.selectMode.selected.has(it.id), meta.kind)
-            : renderRow(it)
-          ).join('')
-      }
+      <div id="attr-list"></div>
     `}
   `;
 
   if (noContacts) return;
 
-  // Search input
+  // Make date / time inputs open their picker on click of the whole box,
+  // not only the tiny trailing icon. No-op on renderers without support.
+  wireDateInputs(app);
+
+  // Initial paint of the list section.
+  rerenderList(routeKey, meta);
+
+  // Search input. The input node is NEVER replaced — only the list
+  // subtree underneath is rewritten. The previous implementation called
+  // rerender(app,...) on every keystroke which destroyed the live input
+  // and dropped IME composition context (typing "汉" lost the intermediate
+  // pinyin strokes, and even plain backspace lost the caret until the
+  // user re-clicked the box). Now we mirror the value into state, repaint
+  // only `<div id="attr-list">`, and never touch the input itself.
   const search = document.getElementById('attr-search');
   if (search) {
-    search.oninput = (e) => {
-      s.query = e.target.value;
-      rerender(app, routeKey, meta);
+    let settleTimer = null;
+    const apply = () => {
+      settleTimer = null;
+      s.query = search.value;
+      rerenderList(routeKey, meta);
+      // Keep focus on the same input node (it was never replaced).
       const fresh = document.getElementById('attr-search');
-      if (fresh) {
-        fresh.focus();
-        const v = fresh.value;
-        fresh.setSelectionRange(v.length, v.length);
-      }
+      if (fresh && document.activeElement !== fresh) fresh.focus();
     };
+    search.addEventListener('input', () => {
+      // Debounce IME composition bursts. 120ms covers the typical settle
+      // time for Chinese/Japanese IMEs; the input is not torn down so
+      // backspace, selection edits, and cursor moves work continuously.
+      if (settleTimer) clearTimeout(settleTimer);
+      settleTimer = setTimeout(apply, 120);
+    });
+    search.addEventListener('compositionend', () => {
+      if (settleTimer) clearTimeout(settleTimer);
+      apply();
+    });
   }
 
   // Contact filter dropdown
@@ -225,7 +272,9 @@ function rerender(app, routeKey, meta) {
   document.getElementById('attr-new').onclick = () => {
     s.editingId = null;
     s.draftDescription = '';
-    s.draftEvent = '';
+    // Pre-fill with today's local date so the user doesn't have to pick
+    // anything; they can also click the input to change it.
+    s.draftEvent = todayYmd();
     // Default to the currently filtered contact if any, else the first contact.
     s.draftContactId = s.contactId || (s.contacts[0] ? s.contacts[0].id : '');
     s.formOpen = true;
@@ -235,33 +284,16 @@ function rerender(app, routeKey, meta) {
   if (showForm) wireForm(app, routeKey, meta);
 
   // Row actions (idle mode only — in select mode we render a checkbox on
-  // each row instead of the per-row edit/delete buttons).
+  // each row instead of the per-row edit/delete buttons). Click on a row
+  // opens its detail page, which is where all edits / deletes happen.
   if (!selectActive) {
-    app.querySelectorAll('.attr-edit').forEach((btn) => {
-      btn.onclick = () => {
-        const id = btn.dataset.id;
-        const it = s.items.find((x) => x && x.id === id);
-        if (!it) return;
-        s.editingId = id;
-        s.draftDescription = it.description || '';
-        s.draftEvent = it.event || '';
-        s.formOpen = false;
-        rerender(app, routeKey, meta);
-      };
-    });
-    app.querySelectorAll('.attr-del').forEach((btn) => {
-      btn.onclick = async () => {
-        const id = btn.dataset.id;
-        if (!confirm('确认删除该条目？')) return;
-        try {
-          await api.attributes.delete(id);
-          toast('已删除');
-        } catch (e) {
-          toast('删除失败：' + (e.message || e));
-          return;
-        }
-        await refreshItems(routeKey);
-        rerender(app, routeKey, meta);
+    app.querySelectorAll('.attribute-row').forEach((row) => {
+      row.onclick = (e) => {
+        // Don't hijack clicks that are targeting the contact-name inline link
+        // — those should bubble through to the router and land on the contact
+        // detail page, not on the attribute detail page.
+        if (e.target && e.target.closest && e.target.closest('a.inline-link')) return;
+        navigate('/attributes/' + row.dataset.id);
       };
     });
   }
@@ -286,9 +318,17 @@ function rerender(app, routeKey, meta) {
     // Lightweight onChange: a single checkbox flip just refreshes the
     // toolbar's count + enabled state without rebuilding the whole list
     // (which would steal the user's focus from the checkbox).
+    // Also sync the per-row checkbox visuals — without this, hitting
+    // "全选" only flips the toolbar counter; the row boxes stay empty
+    // because they were rendered once at enter-time.
     s.selectMode.onChange = () => {
       const t = app.querySelector('[data-bulk-toolbar]');
       if (!t) return;
+      app.querySelectorAll('.bulk-row-check').forEach((cb) => {
+        const id = cb.dataset.bulkId;
+        if (!id) return;
+        cb.checked = s.selectMode.selected.has(id);
+      });
       t.outerHTML = bulkToolbarHtml({
         count: s.selectMode.selected.size,
         total: filtered.length,
@@ -312,17 +352,18 @@ function rerender(app, routeKey, meta) {
 function rowInner(it) {
   const id = escapeHtml(it.id);
   const tone = contactColorIndex(it.contact_name);
+  const kind = suggestIconKind(it.contact_relationship);
   return `
     <div class="list-row" data-id="${id}" style="background:transparent;">
       <div class="lr-id">
-        <div class="avatar-lg" style="background: var(--contact-${tone})">${escapeHtml(firstChar(it.contact_name))}</div>
+        <div class="contact-avatar" style="color: var(--contact-${tone})">${iconSVG(kind, { title: it.contact_name })}</div>
       </div>
-      <div class="lr-main">
-        <div class="lr-title"><a class="inline-link" href="#/contacts/${escapeHtml(it.contact_id)}">${escapeHtml(displayName({ name: it.contact_name }))}</a></div>
-        <div class="lr-meta">${escapeHtml(it.description || '')}</div>
+      <div class="lr-main lr-main-inline">
+        <a class="inline-link lr-title" href="#/contacts/${escapeHtml(it.contact_id)}">${escapeHtml(displayName({ name: it.contact_name }))}</a>
+        <div class="lr-title-main">${escapeHtml(it.description || '')}</div>
       </div>
       <div class="lr-side">
-        ${it.event ? `<div class="time-chip"><span class="chip-dot"></span>${escapeHtml(fmtDate(it.event))}</div>` : ''}
+        <div class="lr-created-at">${escapeHtml(fmtDate(it.created_at))}</div>
       </div>
     </div>
   `;
@@ -339,11 +380,16 @@ function wireForm(app, routeKey, meta) {
     ev.value = s.draftEvent;
   } else {
     desc.value = '';
-    ev.value = '';
+    // New rows default the date to today in local time so the user gets a
+    // sensible value without picking anything. They can still clear it.
+    ev.value = s.draftEvent || todayYmd();
   }
   document.getElementById('attr-save').onclick = async () => {
     const description = desc.value.trim();
     if (!description) { toast('请填写描述'); desc.focus(); return; }
+    // Empty input -> treat as today. Bilingual callers (server-side) already
+    // do this fallback, but doing it here keeps the persisted value honest
+    // even when the user later edits without saving through this form.
     const event = ev.value || todayYmd();
     try {
       if (s.editingId) {
@@ -361,7 +407,7 @@ function wireForm(app, routeKey, meta) {
     }
     s.editingId = null;
     s.draftDescription = '';
-    s.draftEvent = '';
+    s.draftEvent = todayYmd();
     s.draftContactId = '';
     s.formOpen = false;
     await refreshItems(routeKey);
@@ -370,7 +416,7 @@ function wireForm(app, routeKey, meta) {
   document.getElementById('attr-cancel').onclick = () => {
     s.editingId = null;
     s.draftDescription = '';
-    s.draftEvent = '';
+    s.draftEvent = todayYmd();
     s.draftContactId = '';
     s.formOpen = false;
     rerender(app, routeKey, meta);

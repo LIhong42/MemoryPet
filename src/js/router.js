@@ -2,11 +2,25 @@
 const routes = {};
 let onChangeCb = null;
 
+// Tracks the path that was rendered most recently. Detail pages snapshot
+// this on mount so the "back" link always points at the page the user was
+// on before opening the detail page — even when the previous URL is
+// something the detail page itself doesn't recognize (e.g. another
+// contact's sub-page). Updated AFTER the handler runs so the snapshot taken
+// inside a handler still reflects the prior page, not the current one.
+let lastPath = '';
+
 export function register(path, handler) {
   routes[path] = handler;
 }
 
 export function onChange(cb) { onChangeCb = cb; }
+
+// Detail pages call this on mount to capture the URL the user came from.
+// Returns the path WITHOUT a leading '#', suitable for navigate().
+export function getReferrerPath() {
+  return lastPath || '';
+}
 
 function parseHash() {
   const h = (location.hash || '#/').slice(1); // drop leading #
@@ -57,6 +71,9 @@ export async function dispatch() {
     document.getElementById('app').innerHTML =
       `<div class="empty">出错了：${(e && e.message) || e}</div>`;
   }
+  // Update lastPath AFTER the handler resolves so a detail page's render()
+  // sees the previous page's URL, not its own.
+  lastPath = m.path;
 }
 
 export function navigate(path) {

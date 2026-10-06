@@ -16,7 +16,7 @@
 // The branch is decided at the top of `renderEdit` based on the URL's
 // ?category=… param. Keeping both flows in one file avoids duplicating the
 // route table and the constants shared by all three categories.
-import { api, escapeHtml, displayName, fmtDateTime, toast, memorialPhotoUrl, fetchPhotoDataUrl, invalidatePhotoDataUrl } from '../api.js';
+import { api, escapeHtml, displayName, fmtDateTime, toast, memorialPhotoUrl, fetchPhotoDataUrl, invalidatePhotoDataUrl, todayYmd, nowDatetimeLocal, wireDateInputs } from '../api.js';
 import { register, navigate } from '../router.js';
 
 const CATEGORIES = ['general', 'memorial', 'work'];
@@ -35,15 +35,6 @@ function resolveCategory(params) {
 
 function categoryTitle(c) { return CATEGORY_TITLE[c] || '提醒日期'; }
 function categoryListRoute(c) { return CATEGORY_LIST_ROUTE[c] || '/reminders'; }
-
-// Local-time YYYY-MM-DD HH:MM string for `datetime-local` defaults. The
-// form appends ':00' for seconds before posting so the server can match
-// the canonical `YYYY-MM-DD HH:MM:SS` shape.
-function nowDatetimeLocal() {
-  const d = new Date();
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
 
 async function renderEdit(args, params) {
   // Memorial events use a different form, table, and API namespace.
@@ -64,7 +55,7 @@ async function renderEdit(args, params) {
     remind: true,
     remind_kind: 'one_time',
     remind_time: '09:00',
-    remind_date: new Date().toISOString().slice(0, 10),
+    remind_date: todayYmd(),
     lunar_month: null,
     lunar_day: null,
     tag_kind: null,
@@ -79,16 +70,6 @@ async function renderEdit(args, params) {
   // fields are populated (typically a saved lunar reminder); otherwise solar.
   const initialCalMode = (ev.lunar_month && ev.lunar_day) ? 'lunar' : 'solar';
 
-  // For festival events the stored `title` is a code (e.g. 'fathers_day').
-  // Resolve it to a human label so the form has a meaningful subtitle even
-  // though the title field itself is hidden.
-  let titleDisplay = ev.title || '';
-  if (ev.tag_kind === 'festival') {
-    const festivals = await api.events.listFestivals();
-    const f = festivals.find((x) => x.code === ev.title);
-    if (f) titleDisplay = f.label;
-  }
-
   // 工作事件不需要「类型」选项（生日/纪念日/节日）和「关联联系人」字段。其余类别保留。
   const showTagKind = category !== 'work';
   const showContact = category !== 'work';
@@ -99,7 +80,6 @@ async function renderEdit(args, params) {
       <a class="inline-link" href="${listHref}">← 返回列表</a>
     </div>
     <div class="card">
-      ${titleDisplay ? `<div class="meta" style="margin-bottom: 10px;">标题：<strong>${escapeHtml(titleDisplay)}</strong></div>` : ''}
       ${showTagKind ? `
       <div class="field">
         <label>类型</label>
@@ -146,7 +126,7 @@ async function renderEdit(args, params) {
         <div id="solar-fields">
           <div class="field">
             <label id="date-label">日期</label>
-            <input type="date" id="e-date" value="${escapeHtml(ev.remind_date || new Date().toISOString().slice(0,10))}"/>
+            <input type="date" id="e-date" value="${escapeHtml(ev.remind_date || todayYmd())}"/>
           </div>
         </div>
         <div id="lunar-fields" class="hidden">
@@ -214,6 +194,10 @@ async function renderEdit(args, params) {
   toggleRemind();
   toggleKind();
   toggleCalMode();
+
+  // Make the date / time / datetime-local inputs open their picker on click
+  // of the whole input, not just the trailing icon.
+  wireDateInputs(app);
 
   document.getElementById('save').onclick = async () => {
     const mode = document.querySelector('input[name="e-cal-mode"]:checked')?.value || 'solar';
@@ -682,6 +666,10 @@ async function renderMemorialEdit(args, params) {
       navigate(categoryListRoute('memorial'));
     };
   }
+
+  // Make the date / time / datetime-local inputs open their picker on click
+  // of the whole input, not just the trailing icon.
+  wireDateInputs(app);
 }
 
 // /events/:id and /events/:id/edit both render the edit form. Clicking an

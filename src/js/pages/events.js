@@ -6,7 +6,7 @@
 //
 // Both filter values are reflected in the URL hash so the page can be
 // bookmarked / shared. Changing either triggers a re-fetch via events:list.
-import { api, escapeHtml, firstChar, displayName, eventKindAttr, fmtDateTime, formatRelative, countdownTo, categoryIcon, contactColorIndex, toast } from '../api.js';
+import { api, escapeHtml, displayName, eventKindAttr, formatRelative, countdownTo, categoryIcon } from '../api.js';
 import { register, navigate } from '../router.js';
 import {
   bulkEnterLinkHtml, bulkToolbarHtml, bulkSelectableRowHtml,
@@ -154,6 +154,14 @@ async function render(args, params) {
     pageState.selectMode.onChange = () => {
       const t = app.querySelector('[data-bulk-toolbar]');
       if (!t) return;
+      // Sync every row checkbox with the current Set — otherwise hitting
+      // "全选" in the toolbar only updates the counter; the per-row boxes
+      // stay empty because they were rendered once at enter-time.
+      app.querySelectorAll('.bulk-row-check').forEach((cb) => {
+        const id = cb.dataset.bulkId;
+        if (!id) return;
+        cb.checked = pageState.selectMode.selected.has(id);
+      });
       t.outerHTML = bulkToolbarHtml({
         count: pageState.selectMode.selected.size,
         total: filteredEvents.length,
@@ -174,20 +182,14 @@ async function render(args, params) {
 // Inner content for a single event row when wrapped in a bulk-selectable
 // shell. Same fields as renderRow but without the clickable-card wrapper.
 function rowInner(e, cById, festByCode) {
-  let displayTitle = e.title || '';
-  if (e.tag_kind === 'festival' && festByCode && festByCode[e.title]) {
-    displayTitle = festByCode[e.title];
-  }
+  let displayTitle = resolveDisplayTitle(e, cById, festByCode);
   return renderRowInner(e, displayTitle, cById);
 }
 
 function renderRow(e, cById, festByCode) {
   // Festival events store their title as the festival code (e.g.
   // 'fathers_day'). Resolve to the human label for display.
-  let displayTitle = e.title || '';
-  if (e.tag_kind === 'festival' && festByCode && festByCode[e.title]) {
-    displayTitle = festByCode[e.title];
-  }
+  const displayTitle = resolveDisplayTitle(e, cById, festByCode);
   const kind = eventKindAttr(e);
   return `
         <div class="card list-row clickable" data-kind="${escapeHtml(kind)}" data-id="${escapeHtml(e.id)}">
@@ -196,18 +198,35 @@ function renderRow(e, cById, festByCode) {
       `;
 }
 
+// Compute the row's display title. Three cases:
+//   1. Festival → resolve the code to a human label (e.g. 'fathers_day' → '父亲节').
+//   2. Tag-kind + stored "的提醒" title → rewrite to "{name}的{tagKindLabel}" so the
+//      list visually matches the holiday format ("刘杰的生日" rather than
+//      "刘杰的提醒").
+//   3. Otherwise → use the stored title as-is.
+function resolveDisplayTitle(e, cById, festByCode) {
+  const raw = e.title || '';
+  if (e.tag_kind === 'festival' && festByCode && festByCode[raw]) {
+    return festByCode[raw];
+  }
+  const contact = e.contact_id && cById && cById[e.contact_id] ? cById[e.contact_id] : null;
+  if (contact && e.tag_kind && tagKindLabel(e.tag_kind) && raw.endsWith('的提醒')) {
+    const name = displayName(contact);
+    if (raw === `${name}的提醒`) {
+      return `${name}的${tagKindLabel(e.tag_kind)}`;
+    }
+  }
+  return raw;
+}
+
 // Shared row body used by both idle renderRow (wrapped in a .card) and
 // bulk-select rowInner (wrapped in .bulk-row). Returns the inner three-column
 // grid plus the right-side time chip.
 function renderRowInner(e, displayTitle, cById) {
   const kind = eventKindAttr(e);
-  const contact = e.contact_id && cById && cById[e.contact_id] ? cById[e.contact_id] : null;
-  const contactName = contact ? displayName(contact) : '';
-  const contactTone = contact ? contactColorIndex(contact.name) : 0;
   const metaParts = [];
   if (e.lunar_month && e.lunar_day) metaParts.push(`农历 ${e.lunar_month}-${e.lunar_day}`);
   metaParts.push(kindLabel(e.remind_kind));
-  if (contact) metaParts.push(escapeHtml(contactName));
   if (!e.active) metaParts.push('已结束');
   const meta = metaParts.join(' · ');
   // Time chip on the right: relative date + countdown.
@@ -218,7 +237,6 @@ function renderRowInner(e, displayTitle, cById) {
   return `
     <div class="lr-id">
       <span class="cat-icon" data-tone="${escapeHtml(kind)}">${escapeHtml(categoryIcon(e.category, e.tag_kind))}</span>
-      ${contact ? `<span class="stack-av" style="background: var(--contact-${contactTone})" title="${escapeHtml(contactName)}">${escapeHtml(firstChar(contact.name))}</span>` : ''}
     </div>
     <div class="lr-main">
       <div class="lr-title">${escapeHtml(displayTitle || '(无标题)')}${tagLabel ? ` <span class="tag" style="margin-left:6px">${escapeHtml(tagLabel)}</span>` : ''}</div>

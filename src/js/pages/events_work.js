@@ -62,6 +62,14 @@ async function render(args, params) {
     pageState.selectMode.onChange = () => {
       const t = app.querySelector('[data-bulk-toolbar]');
       if (!t) return;
+      // Sync every row checkbox with the current Set — otherwise hitting
+      // "全选" in the toolbar only updates the counter; the per-row boxes
+      // stay empty because they were rendered once at enter-time.
+      app.querySelectorAll('.bulk-row-check').forEach((cb) => {
+        const id = cb.dataset.bulkId;
+        if (!id) return;
+        cb.checked = pageState.selectMode.selected.has(id);
+      });
       t.outerHTML = bulkToolbarHtml({
         count: pageState.selectMode.selected.size,
         total: events.length,
@@ -106,13 +114,18 @@ function workRowInner(e, cById) {
   const target = e.next_fire_at || e.remind_date;
   const rel = formatRelative(target);
   const cd  = countdownTo(target);
+  // 工作事件没有关联联系人，标题总是被服务端默认为「新建提醒」。
+  // 直接展示 description（即用户填写的具体工作内容）作为主行，标题
+  // 退化为没有 description 时的兜底。
+  const desc = (e.description || '').trim();
+  const mainLine = desc || e.title || '(无描述)';
   return `
     <div class="lr-id">
       <span class="cat-icon" data-tone="work">${escapeHtml(categoryIcon('work', e.tag_kind))}</span>
       ${contact ? `<span class="stack-av" style="background: var(--contact-${contactTone})" title="${escapeHtml(contactName)}">${escapeHtml(firstChar(contact.name))}</span>` : ''}
     </div>
     <div class="lr-main">
-      <div class="lr-title">${escapeHtml(e.title || '(无标题)')}</div>
+      <div class="lr-title">${escapeHtml(mainLine)}</div>
       <div class="lr-meta">${meta}</div>
     </div>
     <div class="lr-side">
