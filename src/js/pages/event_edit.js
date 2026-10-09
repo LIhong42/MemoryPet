@@ -17,7 +17,7 @@
 // ?category=… param. Keeping both flows in one file avoids duplicating the
 // route table and the constants shared by all three categories.
 import { api, escapeHtml, displayName, fmtDateTime, toast, memorialPhotoUrl, fetchPhotoDataUrl, invalidatePhotoDataUrl, todayYmd, nowDatetimeLocal, wireDateInputs } from '../api.js';
-import { register, navigate } from '../router.js';
+import { register, navigate, getReferrerPath } from '../router.js';
 
 const CATEGORIES = ['general', 'memorial', 'work'];
 const CATEGORY_TITLE = { general: '提醒日期', memorial: '回忆事件', work: '工作事件' };
@@ -65,7 +65,12 @@ async function renderEdit(args, params) {
   }
   const contacts = await api.contacts.list();
   const listRoute = categoryListRoute(category);
-  const listHref = '#' + listRoute;
+  // The "back" target honors the page the user actually came from rather
+  // than the hard-coded category list. Falling back to the category list
+  // keeps the legacy behavior for flows where no referrer exists (deep
+  // link, app cold start, etc.).
+  const returnTo = getReferrerPath() || listRoute;
+  const listHref = '#' + returnTo;
   // Pre-compute the initial calendar mode: prefer lunar when both lunar
   // fields are populated (typically a saved lunar reminder); otherwise solar.
   const initialCalMode = (ev.lunar_month && ev.lunar_day) ? 'lunar' : 'solar';
@@ -260,7 +265,7 @@ async function renderEdit(args, params) {
         await api.events.update(ev.id, input);
         toast('已保存');
       }
-      navigate(listRoute);
+      navigate(returnTo);
     } catch (e) {
       toast((e && e.message) || '保存失败');
     }
@@ -270,7 +275,7 @@ async function renderEdit(args, params) {
       if (!confirm('确认删除该事件？')) return;
       await api.events.delete(ev.id);
       toast('已删除');
-      navigate(listRoute);
+      navigate(returnTo);
     };
   }
 }
@@ -286,7 +291,11 @@ async function renderEdit(args, params) {
 async function renderMemorialEdit(args, params) {
   const app = document.getElementById('app');
   const isNew = !args.id;
-  const listHref = '#/events/memorial';
+  // Honor the page the user came from for the "back" link & post-save
+  // navigation. Fall back to the memorial list when there is no referrer
+  // (deep link, cold start, etc.).
+  const returnTo = getReferrerPath() || categoryListRoute('memorial');
+  const listHref = '#' + returnTo;
   const preselectedContactId = params.contact_id || '';
 
   let ev = {
@@ -649,7 +658,7 @@ async function renderMemorialEdit(args, params) {
     pendingObjectUrls = [];
 
     toast(isNew ? '已创建' : '已保存');
-    navigate(categoryListRoute('memorial'));
+    navigate(returnTo);
   };
 
   if (!isNew) {
@@ -663,7 +672,7 @@ async function renderMemorialEdit(args, params) {
       }
       for (const u of pendingObjectUrls) URL.revokeObjectURL(u);
       toast('已删除');
-      navigate(categoryListRoute('memorial'));
+      navigate(returnTo);
     };
   }
 

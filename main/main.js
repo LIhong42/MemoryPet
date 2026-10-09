@@ -46,17 +46,19 @@ function getPetState() { return petState; }
 function setActiveReminder(r) { activeReminder = r; }
 
 function broadcastPetState() {
-  const head = queue.head();
+  // Use the active (non-dismissed) subset for both the count and the head
+  // bubble. Dismissed items stay in the queue but should not nag the user.
+  const activeHead = queue.activeHead();
   const payload = {
     state: petState ? 'REMINDER' : 'NORMAL',
-    count: queue.len(),
+    count: queue.activeCount(),
     // Carry enough of `head` that the pet window can render a meaningful
     // speech bubble without an extra round-trip back to us. Fields are
     // already on the head object (see scheduler.ReminderQueue → scanAndFire).
-    head: head ? {
-      title: head.title,
-      contact_name: head.contact_name || null,
-      description: head.description || null,
+    head: activeHead ? {
+      title: activeHead.title,
+      contact_name: activeHead.contact_name || null,
+      description: activeHead.description || null,
     } : null,
   };
   if (winPet && !winPet.isDestroyed()) winPet.webContents.send('pet:state-changed', payload);

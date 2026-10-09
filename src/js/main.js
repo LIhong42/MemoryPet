@@ -61,9 +61,12 @@ function showReminderModal(r) {
   modal.classList.remove('hidden');
 
   document.getElementById('r-done').onclick = async () => {
-    await api.reminders.markDone(r.source, r.source_id);
+    // Soft-dismiss for today: pet stops nagging but the entry remains on
+    // the 今日 page (with a "已完成" badge) so the user can still scroll
+    // back and click through to the source event / important date.
+    await api.reminders.completeForToday(r.source, r.source_id);
     modal.classList.add('hidden');
-    toast('已标记完成');
+    toast('已标记完成（今日不再提醒）');
     location.reload();
   };
   document.getElementById('r-snooze').onclick = async () => {

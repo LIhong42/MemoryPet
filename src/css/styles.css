@@ -640,6 +640,23 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
 .card[data-kind="important"]   { border-left-color: var(--cat-birthday); }
 .card[data-kind="reminder"]    { border-left-color: var(--accent); }
 
+/* Soft-completed reminders (user clicked "完成" but kept the entry on the
+   今日 page as a record). Visually muted so the eye still lands on the
+   pending items first, but discoverable on scroll so the user can click
+   through and verify what they finished. */
+.card[data-completed="true"] {
+  /* Soft visual differentiation only — keep the title font identical to
+     the description font on the likes/attributes page so a finished
+     item still reads naturally when the user scrolls back to it. The
+     status is also surfaced via the right-side chip (no `urgent` class
+     when completed), so we don't need opacity / line-through on the
+     text itself. */
+  opacity: 0.7;
+}
+.card[data-completed="true"]:hover {
+  opacity: 0.95;
+}
+
 /* ---- List-row layout (revised 2026-10-05) ----
    Replaces the legacy <div class="row between"> template which crammed
    every list row's content into the left half and left the right side

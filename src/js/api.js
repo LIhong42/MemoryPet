@@ -56,6 +56,14 @@ export const api = {
   },
   reminders: {
     listActive: () => M.reminders.listActive(),
+    // Today's reminder view: every event scheduled for today (whether
+    // or not the scheduler has fired it yet), with the soft-completion
+    // state attached. Drives the "当前提醒" block on the 今日 page.
+    listTodayView: () => M.reminders.listTodayView(),
+    // Soft-dismiss for today. The pet stops nagging but the queue item
+    // (and 今日 page entry) remain visible so the user can still scroll
+    // back to confirm what they finished.
+    completeForToday: (source, id) => M.reminders.completeForToday(source, id),
     markDone: (source, id) => M.reminders.markDone(source, id),
     snooze: (source, id, minutes) => M.reminders.snooze(source, id, minutes),
   },

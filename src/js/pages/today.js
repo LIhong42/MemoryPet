@@ -10,7 +10,14 @@ export async function render() {
   const events = await api.events.listToday();
   const contacts = await api.contacts.list();
   const cById = Object.fromEntries(contacts.map((c) => [c.id, c]));
-  const activeReminders = await api.reminders.listActive();
+  // The "当前提醒" block now drives off `listTodayView` so it covers
+  // every event scheduled for today — not just the ones the scheduler
+  // has already fired. This matches the user's mental model: anything
+  // I should remember today is in this list, whether the pet has nagged
+  // me about it yet or not. Soft-completed items are included too, so
+  // the user can scroll back to see what they finished and click
+  // through to confirm.
+  const todayView = await api.reminders.listTodayView();
 
   const today = new Date();
   const m = today.getMonth() + 1;
@@ -27,26 +34,43 @@ export async function render() {
     <h1>今日 · ${today.getFullYear()}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}</h1>
 
     <div class="section-header"><h2>⏰ 当前提醒</h2></div>
-    ${activeReminders.length === 0
-      ? `<div class="empty">暂无待办提醒 ✨</div>`
-      : activeReminders.map((r) => {
+    ${(() => {
+      if (todayView.length === 0) {
+        return `<div class="empty">今日暂无待办提醒 ✨</div>`;
+      }
+      // The list is already sorted by the IPC handler: pending items
+      // first, completed items last, each subgroup ordered by fire time.
+      return todayView.map((r) => {
         const kind = r.source === 'event' ? 'reminder' : 'important';
         const sourceLabel = r.source === 'event' ? '事件' : '重要日期';
         const contactName = r.contact_name || '';
+        const completed = !!r.dismissed_for_today;
+        const chipLabel = '今日提醒';
+        // The card is a single line: just the event description (or a
+        // contact-name / source fallback when description is empty). No
+        // second "meta" row — duplicating the same text twice adds
+        // visual noise and doesn't carry extra information for a
+        // reminder the user already has context on.
+        const description = (r.description || '').trim();
+        const titleText = description || contactName || sourceLabel;
+        // Preserve the event's real category (general / work) so the edit
+        // page opens the right form. important_date has no category — it
+        // doesn't have an editable form anyway, so default to general.
+        const dataCategory = r.category || 'general';
         return `
-        <div class="card list-row clickable" data-kind="${kind}" data-source="${escapeHtml(r.source)}" data-id="${escapeHtml(r.source_id)}" data-action="reminder">
+        <div class="card list-row clickable" data-kind="${kind}" data-source="${escapeHtml(r.source)}" data-id="${escapeHtml(r.source_id)}" data-action="reminder" data-completed="${completed}" data-category="${escapeHtml(dataCategory)}">
           <div class="lr-id">
             <span class="cat-icon" data-tone="${kind}">⏰</span>
           </div>
           <div class="lr-main">
-            <div class="lr-title">${escapeHtml(r.title)} <span class="tag" style="margin-left:6px">待处理</span></div>
-            <div class="lr-meta">${escapeHtml(sourceLabel)}${contactName ? ' · ' + escapeHtml(contactName) : ''}</div>
+            <div class="lr-title">${escapeHtml(titleText)}</div>
           </div>
           <div class="lr-side">
-            <div class="time-chip urgent"><span class="chip-dot"></span>立即处理</div>
+            <div class="time-chip ${completed ? '' : 'urgent'}"><span class="chip-dot"></span>${chipLabel}</div>
           </div>
         </div>
-      `}).join('')}
+      `}).join('');
+    })()}
 
     <div class="section-header"><h2>🎂 重要日期</h2></div>
     ${impDatesAll.length === 0
@@ -94,9 +118,21 @@ export async function render() {
   app.querySelectorAll('.card.clickable').forEach((el) => {
     if (el.dataset.action === 'reminder') {
       el.onclick = () => {
-        window.dispatchEvent(new CustomEvent('open-reminder', {
-          detail: { source: el.dataset.source, source_id: el.dataset.id },
-        }));
+        // The reminder view can include both queue-fired items and
+        // not-yet-fired events scheduled for today. For both, the
+        // "natural" interaction is to land on the source event's edit
+        // form (or its detail route) rather than to risk popping the
+        // reminder modal for the wrong item. The modal path is reserved
+        // for the pet-window click flow, which already targets the
+        // specific queue head by design.
+        if (el.dataset.source === 'event') {
+          navigate('/events/' + el.dataset.id + '?category=' + (el.dataset.category || 'general'));
+        } else {
+          // Important dates don't have a standalone detail route in this
+          // build; just open the home view so the user lands somewhere
+          // useful instead of the modal for a different reminder.
+          navigate('/');
+        }
       };
     } else {
       el.onclick = () => navigate('/events/' + el.dataset.id + '?category=' + (el.dataset.category || 'general'));

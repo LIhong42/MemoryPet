@@ -66,6 +66,14 @@ contextBridge.exposeInMainWorld('mp', {
   // reminders
   reminders: {
     listActive: () => ipcRenderer.invoke('reminders:list_active'),
+    // Today's reminder view: every event scheduled for today (whether
+    // or not the scheduler has fired it yet), with the soft-completion
+    // state attached. Drives the "当前提醒" block on the 今日 page.
+    listTodayView: () => ipcRenderer.invoke('reminders:list_today_view'),
+    // Soft-dismiss for today. The pet stops nagging but the queue item
+    // (and 今日 page entry) remain visible so the user can still scroll
+    // back to confirm what they finished.
+    completeForToday: (source, id) => ipcRenderer.invoke('reminders:complete_for_today', source, id),
     markDone: (source, id) => ipcRenderer.invoke('reminders:mark_done', source, id),
     snooze: (source, id, minutes) => ipcRenderer.invoke('reminders:snooze', source, id, minutes),
   },

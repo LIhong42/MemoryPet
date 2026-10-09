@@ -436,7 +436,15 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
       sql += ' AND tag_kind = ?';
       args.push(opts.tag_kind);
     }
-    sql += ' ORDER BY COALESCE(next_fire_at, remind_date, created_at) ASC';
+    // Two-level ordering: 未完成事件在前（按即将到来的时间升序），
+    // 已完成的单次事件（active=0 或 next_fire_at IS NULL）沉底。
+    // "已完成"的定义：单次事件被触发后会被 scheduler 置为 active=0 +
+    // next_fire_at=NULL（main/scheduler.js）。提醒关闭的一次性事件虽然
+    // active=1 但也 next_fire_at=NULL，按同样规则沉底，避免过期的
+    // remind_date 把它们顶到列表最前面。
+    sql += ` ORDER BY
+      (CASE WHEN remind_kind = 'one_time' AND (active = 0 OR next_fire_at IS NULL) THEN 1 ELSE 0 END) ASC,
+      COALESCE(next_fire_at, remind_date, created_at) ASC`;
     return db.all(sql, args);
   });
 
@@ -900,10 +908,163 @@ function normFreeText(s) {
   });
 
   // ---- Reminders ----
+  // list_active returns every queue item, including items the user already
+  // marked complete for today (with `dismissed_for_today: true`). The
+  // 今日 page uses this distinction to render completed items in a
+  // visually muted style, so the user can still scroll back to see what
+  // they finished. Callers that only want non-dismissed items should use
+  // `pet:get_state` (which carries the active head) or filter client-side.
   ipcMain.handle('reminders:list_active', () => queue.list());
 
+  // Today view: returns EVERY event scheduled for today (whether or not
+  // the scheduler has fired it yet), decorated with the soft-completion
+  // state. The 今日 page uses this so the "当前提醒" block is the
+  // authoritative list of what the user has to deal with today, not just
+  // whatever the scheduler happens to have already nagged about. Pending
+  // items surface above completed ones so attention still flows to what
+  // needs doing.
+  ipcMain.handle('reminders:list_today_view', () => {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const today_date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const today_start = `${today_date} 00:00:00`;
+    const today_end = `${today_date} 23:59:59`;
+    const today_prefix = today_date; // YYYY-MM-DD
+
+    // Pull every event that should fire today. The filter is intentionally
+    // NOT gated on `active = 1` — a one_time event gets flipped to
+    // `active = 0` the moment the scheduler fires it, but the 今日 page
+    // still needs to show the event (now with a "已完成" tag) so the user
+    // can scroll back and confirm what they finished. The same is true
+    // for periodic events the user is looking at mid-day.
+    //
+    // We match on three independent criteria, deduped by id:
+    //   1. one_time with remind_date = today        (covers pre-fire AND
+    //                                                post-fire one_times)
+    //   2. any kind whose next_fire_at falls in today's window
+    //                                                (covers periodic +
+    //                                                daily still scheduled
+    //                                                for later today)
+    //   3. any kind whose last_fired_at falls in today's window
+    //                                                (covers one_times
+    //                                                that already fired
+    //                                                and lost their
+    //                                                next_fire_at)
+    const events = db.all(
+      `SELECT * FROM events
+        WHERE (
+          (remind_kind = 'one_time' AND remind_date = ?)
+          OR (next_fire_at BETWEEN ? AND ?)
+          OR (last_fired_at BETWEEN ? AND ?)
+        )
+        ORDER BY COALESCE(next_fire_at, remind_date) ASC`,
+      [today_date, today_start, today_end, today_start, today_end]
+    );
+
+    // Look up the soft-completion state from reminder_acks. Restrict to
+    // today's acks so that periodic events finished yesterday don't
+    // re-mark as completed for the new day.
+    const ackedTodayIds = new Set();
+    if (events.length > 0) {
+      const ids = events.map((e) => e.id);
+      const placeholders = ids.map(() => '?').join(',');
+      const rows = db.all(
+        `SELECT source_id FROM reminder_acks
+          WHERE source = 'event' AND acked_at LIKE ?
+            AND source_id IN (${placeholders})`,
+        [today_prefix + '%', ...ids]
+      );
+      for (const r of rows) ackedTodayIds.add(r.source_id);
+    }
+
+    // Also surface any queue item that the scheduler fired today but that
+    // is NOT in the events list above — covers the edge case where the
+    // event was completed (active=0) right after firing, or where the
+    // event is a one_time that already got auto-deactivated. The queue
+    // item still represents work the user was told about.
+    const queueItems = queue.list();
+    const eventIdsToday = new Set(events.map((e) => e.id));
+    const extras = [];
+    for (const q of queueItems) {
+      if (q.source !== 'event') continue;
+      if (eventIdsToday.has(q.source_id)) continue;
+      // Only include queue items that fired today.
+      if (q.next_fire_at && String(q.next_fire_at).slice(0, 10) === today_date) {
+        extras.push(q);
+      }
+    }
+
+    const decorate = (r) => ({
+      source: 'event',
+      source_id: r.source_id,
+      title: r.title,
+      description: r.description || null,
+      contact_id: r.contact_id,
+      contact_name: r.contact_name || null,
+      next_fire_at: r.next_fire_at || null,
+      remind_kind: r.remind_kind || null,
+      category: r.category || 'general',
+      dismissed_for_today: !!r.dismissed_for_today,
+    });
+    const view = [
+      ...events.map((e) => decorate({
+        source_id: e.id,
+        title: e.title,
+        description: e.description,
+        contact_id: e.contact_id,
+        contact_name: (() => {
+          if (!e.contact_id) return null;
+          const c = db.one('SELECT name FROM contacts WHERE id = ?', [e.contact_id]);
+          return c ? c.name : null;
+        })(),
+        next_fire_at: e.next_fire_at,
+        remind_kind: e.remind_kind,
+        category: e.category,
+        dismissed_for_today: ackedTodayIds.has(e.id),
+      })),
+      ...extras.map(decorate),
+    ];
+
+    // Pending items first, then completed — eye lands on what still needs
+    // attention before drifting down into today's accomplishments.
+    view.sort((a, b) => {
+      if (a.dismissed_for_today !== b.dismissed_for_today) {
+        return a.dismissed_for_today ? 1 : -1;
+      }
+      return (a.next_fire_at || '').localeCompare(b.next_fire_at || '');
+    });
+
+    return view;
+  });
+
+  // Mark a reminder as "completed for today" — the pet stops nagging, but
+  // the queue item (and the 今日 page entry) remain visible. This is the
+  // soft-dismiss action: the user said they handled it, but might want to
+  // revisit it later in the day to confirm. A periodic reminder's next
+  // occurrence tomorrow is still scheduled normally; the ack row we write
+  // (next_fire_at = NULL) does not block future scanAndFire invocations.
+  //
+  // Works whether or not the event is in the live queue — the renderer
+  // can mark a 今日-view item as completed even before the scheduler has
+  // fired it. The reminder_acks row is the source of truth for "已确认
+  // 完成"; the queue entry is just a transient nag mirror.
+  ipcMain.handle('reminders:complete_for_today', (_e, source, sourceId) => {
+    queue.dismissForToday(source, sourceId);
+    db.run(
+      `INSERT INTO reminder_acks(source, source_id, acked_at, next_fire_at)
+       VALUES (?, ?, ?, NULL)`,
+      [source, sourceId, db.nowStr()]
+    );
+    updatePetState({ queue, setPetState, setActiveReminder });
+    return true;
+  });
+
+  // Backwards-compatible: older renderer builds still call mark_done. Same
+  // semantic now (soft-dismiss for today) so behavior is consistent across
+  // builds. Anything that actually wants to hard-remove a reminder should
+  // delete the underlying event/important_date directly.
   ipcMain.handle('reminders:mark_done', (_e, source, sourceId) => {
-    queue.remove(source, sourceId);
+    queue.dismissForToday(source, sourceId);
     db.run(
       `INSERT INTO reminder_acks(source, source_id, acked_at, next_fire_at)
        VALUES (?, ?, ?, NULL)`,
@@ -931,10 +1092,12 @@ function normFreeText(s) {
 
   // ---- Pet / settings / windowing ----
   ipcMain.handle('pet:get_state', () => {
-    const head = queue.head();
+    // Reflect active (non-dismissed) reminders only. The pill mirrors the
+    // pet's nag count, and dismissed items should not contribute to it.
+    const head = queue.activeHead();
     return {
       state: getPetState() ? 'REMINDER' : 'NORMAL',
-      count: queue.len(),
+      count: queue.activeCount(),
       // Same shape as the `pet:state-changed` payload's head field — the
       // renderer uses one setState() function for both.
       head: head ? {
@@ -1119,7 +1282,7 @@ function normFreeText(s) {
             if (winMain && !winMain.isDestroyed()) {
               winMain.show();
               winMain.focus();
-              const head = queue.head();
+              const head = queue.activeHead();
               if (head) {
                 winMain.webContents.send('main:open-reminder', {
                   source: head.source,
@@ -1278,10 +1441,13 @@ function normFreeText(s) {
 }
 
 function updatePetState({ queue, setPetState, setActiveReminder }) {
-  const len = queue.len();
+  // Reflect active (non-dismissed) reminders only. After a soft "完成"
+  // the queue still contains the dismissed item, but the pet should drop
+  // back to NORMAL — so we key off activeCount/activeHead here.
+  const len = queue.activeCount();
   if (len > 0) {
     setPetState(true);
-    setActiveReminder(queue.head());
+    setActiveReminder(queue.activeHead());
   } else {
     setPetState(false);
     setActiveReminder(null);
