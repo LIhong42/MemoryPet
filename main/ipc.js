@@ -7,6 +7,10 @@ const db = require('./db');
 const { fmtDateTime, computeNextFireEvent } = require('./time_util');
 const { validateLunar } = require('./lunar');
 const { listFestivals, festivalLabel } = require('./festivals');
+const {
+  readFolderPack, readZipPack, installPack, removeImported,
+  isImportedId, readManifestExtras,
+} = require('./pet_pack_import');
 
 // Resolve the name to persist. Accepts legacy first_name/last_name for one
 // release cycle so older renderer builds still work after the schema upgrade;
@@ -1164,6 +1168,132 @@ function normFreeText(s) {
       }
     });
   }
+
+  // ---- Pet pack import (desktop-pet style adapter) ----
+  // These four handlers layer on top of the existing PetRegistry without
+  // changing it. They:
+  //   * surface a per-pet "is imported / origin / importedAt / description"
+  //     view that the registry doesn't track itself;
+  //   * pop a native file/folder picker, validate the pack, slice the
+  //     spritesheet into per-frame PNGs, and install the result into
+  //     `<userData>/MemoryPet/pets/imported-<hash>/`;
+  //   * delete an imported pet directory; if the deletion would orphan the
+  //     current pet, switch back to the first built-in first.
+  //
+  // The legacy `pet:list / get_current / set_current` channels are unchanged,
+  // so the settings page dropdown and the new /pets page share the same
+  // registry view of the world.
+
+  // Resolve the userDataPath the same way PetRegistry.init() does so
+  // installPack / removeImported land in the right place.
+  function getPetsUserDataPath() {
+    return path.join(app.getPath('appData'), 'MemoryPet', 'pets');
+  }
+
+  // First built-in pet id, or null when no built-in exists. Imported pets
+  // (id starts with 'imported-') are skipped on purpose.
+  function pickFirstBuiltinId() {
+    if (!petRegistry) return null;
+    const all = petRegistry.list();
+    const builtin = all.find((p) => !String(p.id || '').startsWith('imported-'));
+    return builtin ? builtin.id : null;
+  }
+
+  // Decorate a registry entry with the manifest extras the /pets UI needs
+  // (description, origin, importedAt). Built-in pets get a stub object so
+  // the UI can render them with the same shape.
+  function decoratePetEntry(pet) {
+    const userData = getPetsUserDataPath();
+    if (String(pet.id).startsWith('imported-')) {
+      const extras = readManifestExtras(userData, pet.id) || {};
+      return {
+        ...pet,
+        description: extras.description || '',
+        source: 'imported',
+        origin: extras.origin || null,
+        importedAt: extras.importedAt || null,
+      };
+    }
+    return {
+      ...pet,
+      description: '',
+      source: 'builtIn',
+      origin: null,
+      importedAt: null,
+    };
+  }
+
+  ipcMain.handle('pet:list_installed', () => {
+    if (!petRegistry) return [];
+    return petRegistry.list().map(decoratePetEntry);
+  });
+
+  ipcMain.handle('pet:import_from_folder', async () => {
+    if (!petRegistry) throw new Error('pet registry unavailable');
+    const pick = await dialog.showOpenDialog(winMain, {
+      title: '从文件夹导入桌宠',
+      properties: ['openDirectory'],
+    });
+    if (pick.canceled || !pick.filePaths || !pick.filePaths.length) {
+      return { canceled: true };
+    }
+    const folder = pick.filePaths[0];
+    const pack = readFolderPack(folder);
+    const installed = installPack(pack, getPetsUserDataPath());
+    petRegistry.rescan();
+    return {
+      ok: true,
+      deduped: !!installed.deduped,
+      pet: { id: installed.id, name: pack.manifest.raw.name || 'Imported Character' },
+    };
+  });
+
+  ipcMain.handle('pet:import_from_zip', async () => {
+    if (!petRegistry) throw new Error('pet registry unavailable');
+    const pick = await dialog.showOpenDialog(winMain, {
+      title: '从 ZIP 导入桌宠',
+      properties: ['openFile'],
+      filters: [{ name: '桌宠包', extensions: ['zip'] }],
+    });
+    if (pick.canceled || !pick.filePaths || !pick.filePaths.length) {
+      return { canceled: true };
+    }
+    const zip = pick.filePaths[0];
+    const pack = readZipPack(zip);
+    const installed = installPack(pack, getPetsUserDataPath());
+    petRegistry.rescan();
+    return {
+      ok: true,
+      deduped: !!installed.deduped,
+      pet: { id: installed.id, name: pack.manifest.raw.name || 'Imported Character' },
+    };
+  });
+
+  ipcMain.handle('pet:remove_imported', (_e, petId) => {
+    if (!petRegistry) throw new Error('pet registry unavailable');
+    if (!isImportedId(petId)) {
+      throw new Error('非导入桌宠不可删除');
+    }
+    let switchedTo = null;
+    // If the user is currently using the pet they're about to delete, we
+    // need to switch them off it first so the pet window doesn't end up
+    // referencing a non-existent pet. setPetId() broadcasts pet:pet-changed
+    // which the pet window already handles by clearing its frame cache.
+    if (petController && petController.petId === petId) {
+      const fallback = pickFirstBuiltinId();
+      if (fallback && fallback !== petId) {
+        petController.setPetId(fallback);
+        switchedTo = fallback;
+      } else {
+        // No built-in to fall back to: refuse the deletion rather than
+        // leaving the renderer pointing at a dead pet.
+        throw new Error('当前正在使用该桌宠且没有内置备选，请先切换到其他桌宠');
+      }
+    }
+    removeImported(petId, getPetsUserDataPath());
+    petRegistry.rescan();
+    return { ok: true, removed: petId, switchedTo };
+  });
 
   // ---- Pet species / walk toggle ----
   // Legacy handlers kept for backwards compatibility with renderers that still

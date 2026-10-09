@@ -100,6 +100,11 @@ contextBridge.exposeInMainWorld('mp', {
     // Autonomous-walk controls.
     getWalkEnabled: () => ipcRenderer.invoke('pet:get_walk_enabled'),
     setWalkEnabled: (b) => ipcRenderer.invoke('pet:set_walk_enabled', b),
+    // Pack import (desktop-pet style adapter) — see main/pet_pack_import.js.
+    listInstalled:   ()        => ipcRenderer.invoke('pet:list_installed'),
+    importFromFolder:()        => ipcRenderer.invoke('pet:import_from_folder'),
+    importFromZip:   ()        => ipcRenderer.invoke('pet:import_from_zip'),
+    removeImported:  (petId)   => ipcRenderer.invoke('pet:remove_imported', petId),
   },
   settings: {
     get: (k) => ipcRenderer.invoke('settings:get', k),

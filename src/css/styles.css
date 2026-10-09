@@ -1078,3 +1078,37 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
   height: 26px;
   display: block;
 }
+
+/* Pet management rows in /settings. Only used by the settings page's
+   installed-pets list; does not touch any existing event / contact /
+   memorial UI selectors. */
+.list-item.pet-row { cursor: default; }
+.list-item.pet-row:hover { transform: none; box-shadow: none; background: var(--panel); }
+.pet-thumb-wrap {
+  width: 56px;
+  height: 56px;
+  flex: 0 0 56px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--accent-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pet-thumb {
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
+  display: block;
+  image-rendering: auto;
+}
+.pet-thumb-emoji {
+  font-size: 28px;
+  line-height: 1;
+}
+.tag-current {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+}

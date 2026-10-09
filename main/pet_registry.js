@@ -207,6 +207,23 @@ class PetRegistry {
       size: manifest.defaultSize,
     };
   }
+
+  /**
+   * Re-scan the user-data pets directory only. Built-in pets (loaded from
+   * `appPath/resources/pets`) stay untouched. Called by the import / remove
+   * IPC handlers after a pack is installed or deleted so the registry picks
+   * up the change without a full app restart.
+   *
+   * Returns the new total pet count.
+   */
+  rescan() {
+    if (!this._userPetsDir) return this._pets.size;
+    for (const [id, entry] of this._pets.entries()) {
+      if (entry.rootDir === this._userPetsDir) this._pets.delete(id);
+    }
+    this._scanOne(this._userPetsDir);
+    return this._pets.size;
+  }
 }
 
 module.exports = { PetRegistry };
