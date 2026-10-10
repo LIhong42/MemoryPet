@@ -1008,6 +1008,11 @@ function normFreeText(s) {
       next_fire_at: r.next_fire_at || null,
       remind_kind: r.remind_kind || null,
       category: r.category || 'general',
+      // Tag kind rides along so the renderer's 当前提醒 cards can pick a
+      // category-specific glyph (🎂/💝/🎉) instead of the generic ⏰ —
+      // matching the per-event list page below. The renderer still falls
+      // back to ⏰ for tag_kind-less events (work / plain reminders).
+      tag_kind: r.tag_kind || null,
       dismissed_for_today: !!r.dismissed_for_today,
     });
     const view = [
@@ -1024,6 +1029,7 @@ function normFreeText(s) {
         next_fire_at: e.next_fire_at,
         remind_kind: e.remind_kind,
         category: e.category,
+        tag_kind: e.tag_kind,
         dismissed_for_today: ackedTodayIds.has(e.id),
       })),
       ...extras.map(decorate),
@@ -1081,11 +1087,12 @@ function normFreeText(s) {
   ipcMain.handle('reminders:snooze', (_e, source, sourceId, minutes) => {
     const newFire = new Date(Date.now() + minutes * 60_000);
     const newFireStr = fmtDateTime(newFire);
-    db.run(
-      `INSERT INTO reminder_acks(source, source_id, acked_at, next_fire_at)
-       VALUES (?, ?, ?, ?)`,
-      [source, sourceId, db.nowStr(), newFireStr]
-    );
+    // A snooze is NOT a "complete" — it just pushes the next fire time.
+    // Earlier builds also INSERTed into reminder_acks here, which
+    // reminders:list_today_view then read as "已 ack / 已完成" and visually
+    // muted the chip, even though the user only asked to be nagged again
+    // later. Filter on next_fire_at window instead, which already excludes
+    // snoozed rows from today's view.
     if (source === 'event') {
       db.run('UPDATE events SET next_fire_at = ? WHERE id = ?', [newFireStr, sourceId]);
     }
