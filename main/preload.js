@@ -105,6 +105,9 @@ contextBridge.exposeInMainWorld('mp', {
     importFromFolder:()        => ipcRenderer.invoke('pet:import_from_folder'),
     importFromZip:   ()        => ipcRenderer.invoke('pet:import_from_zip'),
     removeImported:  (petId)   => ipcRenderer.invoke('pet:remove_imported', petId),
+    // Active pet's manifest.defaultSize. Pet.js calls this on init so its
+    // CSS --size-w / --size-h are correct before the first paint.
+    getCurrentSize:  ()        => ipcRenderer.invoke('pet:get_current_size'),
   },
   settings: {
     get: (k) => ipcRenderer.invoke('settings:get', k),
@@ -124,7 +127,7 @@ contextBridge.exposeInMainWorld('mp', {
 
   // Events from main → renderer
   on: (channel, cb) => {
-    const allowed = ['pet:state-changed', 'main:open-reminder', 'main:navigate'];
+    const allowed = ['pet:state-changed', 'pet:size-changed', 'main:open-reminder', 'main:navigate'];
     if (!allowed.includes(channel)) return () => {};
     const listener = (_e, payload) => cb(payload);
     ipcRenderer.on(channel, listener);

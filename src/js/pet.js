@@ -258,6 +258,15 @@ if (M.on) {
   M.on('pet:state-changed', (payload) => {
     setState(payload.state, payload.count, payload.head);
   });
+  // Window resize: write the new render size into the CSS variables that
+  // size .pet-root / .pet-sprite / .pet-frame / html+body. Fired when the
+  // user switches pet in /settings (PetController.setPetId → setBounds).
+  M.on('pet:size-changed', (payload) => {
+    if (!payload || typeof payload.w !== 'number' || typeof payload.h !== 'number') return;
+    const root = document.documentElement;
+    root.style.setProperty('--size-w', `${payload.w}px`);
+    root.style.setProperty('--size-h', `${payload.h}px`);
+  });
   M.on('pet:pet-changed', (payload) => {
     if (payload && payload.petId && payload.petId !== currentPetId) {
       currentPetId = payload.petId;
@@ -299,6 +308,19 @@ if (M.on) {
       try { currentPetId = await M.pet.getCurrent(); } catch {}
     }
     if (currentPetId) sprite.dataset.pet = currentPetId;
+    // Pull the current render size up-front so the CSS variables match the
+    // window before the first frame paints (avoids a 220×220 → actual-size
+    // flash on launch).
+    if (M.pet.getCurrentSize) {
+      try {
+        const sz = await M.pet.getCurrentSize();
+        if (sz && typeof sz.w === 'number' && typeof sz.h === 'number') {
+          const root = document.documentElement;
+          root.style.setProperty('--size-w', `${sz.w}px`);
+          root.style.setProperty('--size-h', `${sz.h}px`);
+        }
+      } catch {}
+    }
     playVariant('default', 'right');
   } catch (e) {
     console.error('pet init', e);

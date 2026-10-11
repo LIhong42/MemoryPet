@@ -19,6 +19,9 @@ contextBridge.exposeInMainWorld('mp', {
     setCurrent: (id) => ipcRenderer.invoke('pet:set_current', id),
     resolveFrames: (petId, variant, direction) =>
       ipcRenderer.invoke('pet:resolve_frames', petId, variant, direction),
+    // Active pet's manifest.defaultSize. Pet.js calls this on init so its
+    // CSS --size-w / --size-h are correct before the first paint.
+    getCurrentSize: () => ipcRenderer.invoke('pet:get_current_size'),
   },
   app: {
     quit: () => ipcRenderer.invoke('app:quit'),
@@ -29,6 +32,7 @@ contextBridge.exposeInMainWorld('mp', {
       'pet:species-changed',  // legacy
       'pet:action-changed',
       'pet:pet-changed',
+      'pet:size-changed',
     ];
     if (!allowed.includes(channel)) return () => {};
     const listener = (_e, payload) => cb(payload);

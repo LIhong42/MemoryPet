@@ -16,8 +16,25 @@
 const { screen } = require('electron');
 
 const TICK_MS = 100;
-const PET_W = 220;
-const PET_H = 240;
+
+// Render height is fixed; width is computed from the active pet's
+// `manifest.defaultSize` so the character fits the window without any
+// letterboxing. Built-in pets declare 768×832 (≈ 0.92 wide:tall) and end up
+// ≈ 203×220; an imported 109×145 ends up ≈ 165×220. Width floor of 48 px
+// keeps extreme aspect ratios (e.g. a 1×4096 sprite) clickable.
+const PET_RENDER_HEIGHT = 220;
+const PET_RENDER_MIN_WIDTH = 48;
+
+// Resolve `{w, h}` for the renderer / window given a manifest's
+// `defaultSize`. Always returns PET_RENDER_HEIGHT on `h`. Falls back to
+// 220×220 (square) when the input is missing or malformed.
+function petRenderSize(defaultSize) {
+  const w = (defaultSize && Number(defaultSize.w)) || 1;
+  const h = (defaultSize && Number(defaultSize.h)) || 1;
+  if (!(w > 0) || !(h > 0)) return { w: PET_RENDER_HEIGHT, h: PET_RENDER_HEIGHT };
+  const wPx = Math.max(PET_RENDER_MIN_WIDTH, Math.round(PET_RENDER_HEIGHT * (w / h)));
+  return { w: wPx, h: PET_RENDER_HEIGHT };
+}
 
 // UI-level variants the controller emits. Only the two folders shipped with
 // the vup resource set ("Default" + "MOVE") plus the reminder override are
@@ -50,6 +67,17 @@ class PetController {
       db.setSetting('pet_id', this.petId);
     }
     this._reminderOn = false;
+    // Window/CSS render size for the current pet. Recomputed on setPetId()
+    // and used by _bounds() / _stepWalk() so the auto-walk clamp follows
+    // the window when its width changes.
+    let defaultSize = null;
+    if (petRegistry) {
+      const m = petRegistry.getManifest(this.petId);
+      defaultSize = m && m.defaultSize;
+    }
+    const init = petRenderSize(defaultSize);
+    this.renderW = init.w;
+    this.renderH = init.h;
   }
 
   start() {
@@ -79,6 +107,20 @@ class PetController {
     this.db.setSetting('pet_id', id);
     if (this.win && !this.win.isDestroyed()) {
       this.win.webContents.send('pet:pet-changed', { petId: id });
+    }
+    // Resize the window + broadcast the new render size so pet.js can
+    // update its CSS variables. We keep the current x/y position so the
+    // pet doesn't jump to a screen edge on switch.
+    const manifest = this.petRegistry.getManifest(id);
+    const newSize = petRenderSize(manifest ? manifest.defaultSize : null);
+    if (newSize.w !== this.renderW || newSize.h !== this.renderH) {
+      this.renderW = newSize.w;
+      this.renderH = newSize.h;
+      if (this.win && !this.win.isDestroyed()) {
+        const [x, y] = this.win.getPosition();
+        this.win.setBounds({ x, y, width: newSize.w, height: newSize.h });
+        this.win.webContents.send('pet:size-changed', newSize);
+      }
     }
     this.broadcastAction();
   }
@@ -114,7 +156,7 @@ class PetController {
   _bounds() {
     if (!this.win || this.win.isDestroyed()) return null;
     const [x, y] = this.win.getPosition();
-    const display = screen.getDisplayMatching({ x, y, width: PET_W, height: PET_H })
+    const display = screen.getDisplayMatching({ x, y, width: this.renderW, height: this.renderH })
       || screen.getPrimaryDisplay();
     const wa = display.workArea;
     return { x: wa.x, y: wa.y, w: wa.width, h: wa.height };
@@ -205,14 +247,14 @@ class PetController {
     if (x < b.x) {
       x = b.x;
       this.actionDirection = 1;
-    } else if (x + PET_W > b.x + b.w) {
-      x = b.x + b.w - PET_W;
+    } else if (x + this.renderW > b.x + b.w) {
+      x = b.x + b.w - this.renderW;
       this.actionDirection = -1;
     }
     if ((y || 0) < b.y) y = b.y;
-    if ((y + PET_H) > b.y + b.h) y = b.y + b.h - PET_H;
+    if ((y + this.renderH) > b.y + b.h) y = b.y + b.h - this.renderH;
     this.win.setPosition(Math.round(x), Math.round(y), false);
   }
 }
 
-module.exports = { PetController, VALID_VARIANTS };
+module.exports = { PetController, VALID_VARIANTS, petRenderSize };

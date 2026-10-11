@@ -289,6 +289,11 @@ function finalizePack(raw, spriteBytes, previewBytes, source) {
 
 // ---- install / remove ----
 // Install the pack into `<userDataPath>/pets/imported-<digest>/`.
+//
+// `userDataPath` is the user-data *parent* directory (e.g. `<appData>/MemoryPet`),
+// matching the convention used by `PetRegistry.init()`. The caller's helper
+// (ipc.js's `getUserDataPath`) returns this same parent so the install path
+// lines up with what `petRegistry.rescan()` scans.
 function installPack(pack, userDataPath) {
   const { manifest } = pack;
   const id = `imported-${manifest.digest}`;

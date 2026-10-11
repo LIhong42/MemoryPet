@@ -11,6 +11,7 @@ const {
   readFolderPack, readZipPack, installPack, removeImported,
   isImportedId, readManifestExtras,
 } = require('./pet_pack_import');
+const { petRenderSize } = require('./pet_controller');
 
 // Resolve the name to persist. Accepts legacy first_name/last_name for one
 // release cycle so older renderer builds still work after the schema upgrade;
@@ -1174,6 +1175,22 @@ function normFreeText(s) {
         throw err;
       }
     });
+    // Renderer asks for the current pet's render size so it can set the
+    // --size-w / --size-h CSS variables before the first frame paints
+    // (avoids a 220×220 → actual-size flash on launch). Returns the
+    // scaled-to-render-size dimensions (height fixed at 220), not the raw
+    // manifest.defaultSize — so the renderer's CSS variables match the
+    // window the main process just created.
+    ipcMain.handle('pet:get_current_size', () => {
+      if (!petRegistry) return { w: 220, h: 220 };
+      const persisted = db.getSetting('pet_id');
+      const first = petRegistry.list()[0];
+      const id = (persisted && petRegistry.getManifest(persisted)) ? persisted
+        : (first && first.id);
+      if (!id) return { w: 220, h: 220 };
+      const m = petRegistry.getManifest(id);
+      return petRenderSize(m && m.defaultSize);
+    });
   }
 
   // ---- Pet pack import (desktop-pet style adapter) ----
@@ -1193,8 +1210,15 @@ function normFreeText(s) {
 
   // Resolve the userDataPath the same way PetRegistry.init() does so
   // installPack / removeImported land in the right place.
+  //
+  // Returns the user-data *parent* directory (`<appData>/MemoryPet`), not
+  // `<appData>/MemoryPet/pets`. `installPack` / `removeImported` /
+  // `readManifestExtras` each append `pets/` themselves, so passing the
+  // already-suffixed path made imports land at
+  // `<appData>/MemoryPet/pets/pets/imported-<hash>/` — outside what
+  // `petRegistry.rescan()` scans, and silently invisible to /pets.
   function getPetsUserDataPath() {
-    return path.join(app.getPath('appData'), 'MemoryPet', 'pets');
+    return path.join(app.getPath('appData'), 'MemoryPet');
   }
 
   // First built-in pet id, or null when no built-in exists. Imported pets

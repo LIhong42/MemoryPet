@@ -6,7 +6,7 @@ const fs = require('fs');
 const db = require('./db');
 const scheduler = require('./scheduler');
 const ipc = require('./ipc');
-const { PetController } = require('./pet_controller');
+const { PetController, petRenderSize } = require('./pet_controller');
 const { PetRegistry } = require('./pet_registry');
 
 const isDev = process.argv.includes('--dev') || !app.isPackaged;
@@ -34,6 +34,7 @@ let winPet = null;
 let petState = false; // false = NORMAL, true = REMINDER
 let activeReminder = null;
 let petController = null;
+let petRegistryRef = null; // cached for createWindows() to read after init
 
 function setPetState(v) {
   if (petState === v) return;
@@ -70,13 +71,31 @@ queue.on((payload) => {
   broadcastPetState();
 });
 
-function createWindows() {
+function createWindows({ petRegistry } = {}) {
   const petX = parseInt(db.getSetting('pet_x') || '200', 10);
   const petY = parseInt(db.getSetting('pet_y') || '200', 10);
 
+  // Size the pet window from the current pet's manifest.defaultSize. Falls
+  // back to a 220×220 square when no pet has been resolved yet (first
+  // launch with an empty registry) — pet.js's CSS variables also default to
+  // 220px so the first frame doesn't flash at the wrong size.
+  let initialW = 220, initialH = 220;
+  if (petRegistry) {
+    const persisted = db.getSetting('pet_id');
+    const first = petRegistry.list()[0];
+    const id = (persisted && petRegistry.getManifest(persisted)) ? persisted
+      : (first && first.id);
+    if (id) {
+      const m = petRegistry.getManifest(id);
+      const s = petRenderSize(m && m.defaultSize);
+      initialW = s.w;
+      initialH = s.h;
+    }
+  }
+
   winPet = new BrowserWindow({
-    width: 220,
-    height: 240,
+    width: initialW,
+    height: initialH,
     x: petX,
     y: petY,
     frame: false,
@@ -168,7 +187,8 @@ app.whenReady().then(async () => {
     userDataPath: path.join(app.getPath('appData'), 'MemoryPet'),
   });
 
-  createWindows();
+  petRegistryRef = petRegistry;
+  createWindows({ petRegistry });
 
   // Start the autonomous-movement state machine. Created here (after the
   // pet window exists) so it has a window reference to translate.
@@ -198,7 +218,7 @@ app.whenReady().then(async () => {
   });
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindows();
+    if (BrowserWindow.getAllWindows().length === 0) createWindows({ petRegistry: petRegistryRef });
   });
 });
 

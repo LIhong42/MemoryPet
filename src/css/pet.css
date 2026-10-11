@@ -3,10 +3,17 @@
    sent by the main process. CSS handles REMINDER shake, idle bob, and the
    reminder badge/bubble UI bits.
 */
-:root { --size: 220px; }
+:root {
+  /* Window/CSS render size for the active pet. Defaults to 220×220 so the
+     first paint (before pet.js fetches the real size) is at least square.
+     pet.js sets these from `manifest.defaultSize` — height stays fixed
+     (220), width tracks the aspect ratio. */
+  --size-w: 220px;
+  --size-h: 220px;
+}
 html, body {
   margin: 0; padding: 0;
-  width: var(--size); height: var(--size);
+  width: var(--size-w); height: var(--size-h);
   background: transparent;
   overflow: visible;
   -webkit-user-select: none;
@@ -15,12 +22,12 @@ html, body {
 
 .pet-root {
   position: relative;
-  width: var(--size); height: var(--size);
+  width: var(--size-w); height: var(--size-h);
   pointer-events: none;
 }
 
 .pet-sprite {
-  width: var(--size); height: var(--size);
+  width: var(--size-w); height: var(--size-h);
   pointer-events: auto;
   cursor: pointer;
   display: flex; align-items: center; justify-content: center;
@@ -35,8 +42,8 @@ html, body {
 }
 
 .pet-frame {
-  width: var(--size);
-  height: var(--size);
+  width: var(--size-w);
+  height: var(--size-h);
   object-fit: contain;
   filter: drop-shadow(0 4px 8px rgba(0,0,0,0.18));
   image-rendering: -webkit-optimize-contrast;
