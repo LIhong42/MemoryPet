@@ -15,6 +15,7 @@ import './pages/events_work.js';
 import './pages/event_edit.js';
 import './pages/search.js';
 import './pages/settings.js';
+import './pages/export.js';
 
 function updateActiveLink(path) {
   document.querySelectorAll('.nav a').forEach((a) => {

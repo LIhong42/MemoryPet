@@ -111,6 +111,15 @@ export const api = {
     import: () => M.backup.import(),
     apply:  (zipPath) => M.backup.apply(zipPath),
   },
+  // Memorial album / video export by contact + time range. Material scope
+  // is strictly `memorial_events` + `memorial_event_photos`. Underscored
+  // name to avoid the ES reserved word `export` in module scope.
+  export_: {
+    previewFilter: (filter) => M.export_.previewFilter(filter || {}),
+    pdf: (payload) => M.export_.pdf(payload || {}),
+    mp4: (payload) => M.export_.mp4(payload || {}),
+    cancel: (payload) => M.export_.cancel(payload || {}),
+  },
   on: (channel, cb) => M.on(channel, cb),
 };
 

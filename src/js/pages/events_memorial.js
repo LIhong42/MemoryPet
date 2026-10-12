@@ -31,7 +31,12 @@ async function render(args, params) {
   app.innerHTML = `
     <div class="row between">
       <h1>回忆事件 ${!pageState.selectMode.active && events.length > 0 ? bulkEnterLinkHtml() : ''}</h1>
-      <button class="btn" id="new-event">+ 新建</button>
+      <div class="row" style="gap:8px;">
+        ${events.length > 0
+          ? `<button class="btn secondary" id="open-export">导出回忆</button>`
+          : ''}
+        <button class="btn" id="new-event">+ 新建</button>
+      </div>
     </div>
     ${pageState.selectMode.active ? bulkToolbarHtml({
         count: pageState.selectMode.selected.size,
@@ -70,6 +75,12 @@ async function render(args, params) {
   }
   document.getElementById('new-event').onclick = () =>
     navigate('/events/new?category=memorial' + (params.contact_id ? '&contact_id=' + params.contact_id : ''));
+
+  // "导出回忆" lives inside the memorial-events page so the topbar nav
+  // stays untouched. The /export route is still registered globally; we
+  // just enter it from here.
+  const exportBtn = document.getElementById('open-export');
+  if (exportBtn) exportBtn.onclick = () => navigate('/export');
 
   // Bulk-select mode wiring.
   if (pageState.selectMode.active) {

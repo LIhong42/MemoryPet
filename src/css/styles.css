@@ -1111,4 +1111,621 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
   color: #fff;
   border-color: var(--accent);
 }
+
+/* ---- /export page -------------------------------------------------- */
+
+.chip-list-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 6px;
+}
+.chip-list-actions a {
+  color: var(--accent);
+  text-decoration: none;
+  cursor: pointer;
+}
+.chip-list-actions a:hover { text-decoration: underline; }
+
+.chip.chip-selected {
+  background: var(--accent);
+  color: #fff;
+  border: 1px solid var(--accent);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+button.chip { cursor: pointer; border: 1px solid transparent; }
+button.chip:hover { filter: brightness(0.97); }
+
+.export-event-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+.export-event-row {
+  display: grid;
+  grid-template-columns: 24px 1fr 64px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #ececec);
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+}
+.export-event-row:hover { background: #fafafa; }
+.export-event-row .export-event-check { width: 16px; height: 16px; }
+.export-event-body { min-width: 0; }
+.export-event-title { font-weight: 600; }
+.export-event-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.export-event-thumb {
+  width: 64px;
+  height: 64px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #f0f0f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.export-event-thumb .export-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.export-progress {
+  margin-top: 12px;
+  background: #fff8f4;
+  border-color: var(--accent-soft, #f4a8a0);
+}
+.export-progress-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.export-progress-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(244, 168, 160, 0.2);
+  overflow: hidden;
+}
+.export-progress-fill {
+  height: 100%;
+  background: var(--accent, #c5684a);
+  width: 0%;
+  transition: width 250ms ease;
+}
+.export-progress-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ============================================================ */
+/* Album editor (.album-*)                                      */
+/* ============================================================ */
+
+.album-editor-root {
+  /* The editor lives in the #app host, but we want a near-fullscreen
+     feel so the user can use the canvas without competing chrome. */
+  position: relative;
+  min-height: 70vh;
+}
+
+.album-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  min-height: 70vh;
+  color: var(--text);
+}
+
+.album-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.album-toolbar-spacer { flex: 1; }
+.album-toolbar-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.album-toolbar-field select {
+  font-size: 12px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.album-body {
+  display: grid;
+  grid-template-columns: 132px 1fr 220px;
+  gap: 10px;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+.album-side {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  overflow: auto;
+  max-height: 70vh;
+}
+.album-side-title {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.album-page-thumbs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.album-page-thumb {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  color: var(--text);
+}
+.album-page-thumb:hover {
+  border-color: var(--accent);
+}
+.album-page-thumb.is-active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.album-page-thumb-num {
+  font-size: 11px;
+  color: var(--muted);
+}
+.album-page-thumb-mini {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.album-page-thumb-meta {
+  font-size: 10px;
+  color: var(--muted);
+}
+.album-add-page {
+  margin-top: 8px;
+  width: 100%;
+  font-size: 12px;
+  padding: 6px 0;
+}
+
+.album-canvas-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  min-height: 0;
+  overflow: auto;
+  /* The wrapper holds the theme variables; canvas reads them. */
+  --theme-bg: #ffffff;
+  --theme-surface: #f8f7f3;
+  --theme-text: #2a2a2a;
+  --theme-muted: #8a8478;
+  --theme-accent: #f4a8a0;
+  --theme-accent-dark: #d97757;
+  --theme-ribbon: #f4a8a0;
+  --theme-title-size: 28pt;
+  --theme-body-size: 12pt;
+  --theme-caption-size: 11pt;
+}
+.album-canvas {
+  position: relative;
+  background: var(--theme-bg);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  border-radius: 2px;
+  overflow: hidden;
+  color: var(--theme-text);
+  flex-shrink: 0;
+  font-family: var(--font-stack, "Segoe UI", "Microsoft YaHei", sans-serif);
+}
+.album-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--theme-muted);
+  font-size: 14px;
+}
+
+.album-ribbon {
+  position: absolute;
+  pointer-events: none;
+}
+.album-ribbon-left {
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  background: var(--theme-ribbon);
+}
+
+.album-slot {
+  position: absolute;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+  border: 1px dashed transparent;
+  transition: outline 80ms ease;
+  outline: 0 solid transparent;
+  user-select: none;
+}
+.album-slot.is-selected {
+  outline: 2px solid var(--theme-accent);
+  outline-offset: -2px;
+}
+.album-slot.is-drop-target {
+  outline: 2px dashed var(--theme-accent-dark);
+  outline-offset: -2px;
+}
+.album-slot.is-empty {
+  background: rgba(127, 127, 127, 0.12);
+  border: 1px dashed rgba(127, 127, 127, 0.4);
+}
+.album-slot.is-editing {
+  outline: 2px solid var(--theme-accent-dark);
+}
+.album-slot.is-panning,
+.album-slot[data-slot-type="photo"]:has(.album-photo) {
+  cursor: grab;
+}
+.album-slot.is-panning {
+  cursor: grabbing;
+}
+/* Hint to user that text slot can be moved with Alt-drag once selected */
+.album-slot.album-slot-title.is-selected,
+.album-slot.album-slot-caption.is-selected {
+  cursor: grab;
+}
+.album-photo-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: var(--theme-muted);
+  font-size: 11px;
+  text-align: center;
+}
+.album-photo-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: var(--theme-muted);
+  font-size: 11px;
+  background: rgba(127, 127, 127, 0.08);
+}
+.album-photo {
+  position: absolute;
+  pointer-events: none;
+}
+.album-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: fill;  /* pan/zoom already baked in via absolute positioning */
+  display: block;
+}
+.album-photo-edit-controls {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 4px;
+  border-radius: 4px;
+  z-index: 5;
+}
+.album-photo-edit-controls button {
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+  padding: 2px 6px;
+  cursor: pointer;
+  line-height: 1;
+}
+.album-photo-edit-controls button:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.album-text {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 4px 8px;
+  color: var(--theme-text);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: text;
+  position: relative;
+}
+.album-slot-title .album-text,
+.album-slot-caption .album-text {
+  font-size: var(--theme-caption-size);
+}
+.album-text-title {
+  font-weight: 700;
+  color: var(--theme-text);
+  line-height: 1.2;
+  text-align: center;
+  width: 100%;
+  /* Match PDF: clamp to 2 lines for titles that overflow */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.album-text-caption {
+  color: var(--theme-text);
+  white-space: pre-wrap;
+  overflow: hidden;
+  text-align: left;
+  width: 100%;
+  /* Match PDF: clamp to keep height predictable */
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+}
+.album-text.is-selected {
+  outline: 1px dashed var(--theme-accent);
+  outline-offset: -1px;
+}
+
+/* Inspector */
+.album-inspector-empty {
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+  padding: 12px 0;
+}
+.album-inspector-section {
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.album-inspector-section:last-child {
+  border-bottom: none;
+}
+.album-inspector-title {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.album-inspector-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+.album-inspector-label {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.album-inspector-templates {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.album-inspector-tpl {
+  text-align: left;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.album-inspector-tpl:hover {
+  border-color: var(--accent);
+}
+.album-inspector-tpl.is-active {
+  border-color: var(--accent);
+  background: rgba(217, 119, 87, 0.08);
+}
+.album-inspector-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+.album-inspector-row label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.album-inspector-row input[type="range"] {
+  flex: 1;
+}
+.album-inspector-text {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px;
+  font-size: 12px;
+  resize: vertical;
+  min-height: 60px;
+  font-family: inherit;
+}
+
+/* Photo palette */
+.album-palette {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.album-palette-title {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.album-palette-strip {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.album-palette-empty {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 8px 0;
+}
+.album-palette-item {
+  flex: 0 0 auto;
+  width: 64px;
+  height: 64px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+  cursor: grab;
+  overflow: hidden;
+  position: relative;
+}
+.album-palette-item:active {
+  cursor: grabbing;
+}
+.album-palette-item:hover {
+  border-color: var(--accent);
+}
+.album-palette-thumb {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 10px;
+}
+.album-palette-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Drag ghost */
+.album-drag-ghost {
+  position: fixed;
+  pointer-events: none;
+  z-index: 9999;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  max-width: 200px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Theme overrides: each theme gets its own color set. The .album-canvas-wrap
+   already has the CSS custom properties; we only need to override them per
+   theme here. */
+.album-canvas-wrap[data-theme="classic"] {
+  --theme-bg: #ffffff;
+  --theme-surface: #f8f7f3;
+  --theme-text: #2a2a2a;
+  --theme-muted: #8a8478;
+  --theme-accent: #f4a8a0;
+  --theme-accent-dark: #d97757;
+  --theme-ribbon: #f4a8a0;
+}
+.album-canvas-wrap[data-theme="film"] {
+  --theme-bg: #f5efe2;
+  --theme-surface: #ece4d0;
+  --theme-text: #3a2e1f;
+  --theme-muted: #8a7a5e;
+  --theme-accent: #c9a574;
+  --theme-accent-dark: #8a6a3a;
+  --theme-ribbon: #c9a574;
+}
+.album-canvas-wrap[data-theme="magazine"] {
+  --theme-bg: #ffffff;
+  --theme-surface: #f3f3f3;
+  --theme-text: #111111;
+  --theme-muted: #666666;
+  --theme-accent: #1a1a1a;
+  --theme-accent-dark: #000000;
+  --theme-ribbon: #1a1a1a;
+}
+.album-canvas-wrap[data-theme="warm"] {
+  --theme-bg: #fff4e6;
+  --theme-surface: #ffe8d1;
+  --theme-text: #5a3a1a;
+  --theme-muted: #b08868;
+  --theme-accent: #d97757;
+  --theme-accent-dark: #a85530;
+  --theme-ribbon: #d97757;
+}
+.album-canvas-wrap[data-theme="dark"] {
+  --theme-bg: #1a1a1a;
+  --theme-surface: #262626;
+  --theme-text: #f0e6dd;
+  --theme-muted: #9a8f80;
+  --theme-accent: #e8b89a;
+  --theme-accent-dark: #c89070;
+  --theme-ribbon: #e8b89a;
+}
+
+/* Make the canvas title size respond to the theme via the variables. */
+.album-canvas-wrap[data-theme="classic"] { --theme-title-size: 28pt; --theme-caption-size: 11pt; }
+.album-canvas-wrap[data-theme="film"]    { --theme-title-size: 26pt; --theme-caption-size: 10pt; }
+.album-canvas-wrap[data-theme="magazine"]{ --theme-title-size: 40pt; --theme-caption-size: 11pt; }
+.album-canvas-wrap[data-theme="warm"]    { --theme-title-size: 30pt; --theme-caption-size: 11pt; }
+.album-canvas-wrap[data-theme="dark"]    { --theme-title-size: 28pt; --theme-caption-size: 11pt; }
 }

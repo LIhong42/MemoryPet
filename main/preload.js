@@ -125,9 +125,31 @@ contextBridge.exposeInMainWorld('mp', {
     apply:  (zipPath) => ipcRenderer.invoke('backup:apply', zipPath),
   },
 
+  // Export memorial albums (PDF) / videos (MP4) by contact and time range.
+  // All material comes from `memorial_events` + `memorial_event_photos`.
+  //   previewFilter({ contactIds, range:{start,end} }) → counts + event summaries
+  //   pdf({ eventIds, layout? })                      → save dialog → builds
+  //   mp4({ eventIds })                                → save dialog → builds
+  //   cancel({ jobId })                                → flips the killed flag
+  // pdf() now accepts an optional `layout` field (AlbumLayout from the
+  // WYSIWYG editor) for the new multi-template experience. When missing,
+  // it falls back to the original 1-photo-per-page behavior.
+  export_: {
+    previewFilter: (filter) => ipcRenderer.invoke('export:preview_filter', filter || {}),
+    pdf: (payload) => ipcRenderer.invoke('export:pdf', payload || {}),
+    mp4: (payload) => ipcRenderer.invoke('export:mp4', payload || {}),
+    cancel: (payload) => ipcRenderer.invoke('export:cancel', payload || {}),
+  },
+
   // Events from main → renderer
   on: (channel, cb) => {
-    const allowed = ['pet:state-changed', 'pet:size-changed', 'main:open-reminder', 'main:navigate'];
+    const allowed = [
+      'pet:state-changed',
+      'pet:size-changed',
+      'main:open-reminder',
+      'main:navigate',
+      'export:progress',
+    ];
     if (!allowed.includes(channel)) return () => {};
     const listener = (_e, payload) => cb(payload);
     ipcRenderer.on(channel, listener);

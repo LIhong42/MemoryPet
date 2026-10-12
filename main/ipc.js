@@ -12,6 +12,14 @@ const {
   isImportedId, readManifestExtras,
 } = require('./pet_pack_import');
 const { petRenderSize } = require('./pet_controller');
+const albumPdf = require('./album_pdf');
+const albumVideo = require('./album_video');
+
+// Tracks in-flight export jobs so the renderer can cancel them via
+// `export:cancel`. The value is a mutable record: { killed, outPath? }.
+// We don't keep a child handle here because the album modules own the
+// child and expose a `cancelCheck()` callback instead.
+const activeExportJobs = new Map();
 
 // Resolve the name to persist. Accepts legacy first_name/last_name for one
 // release cycle so older renderer builds still work after the schema upgrade;
@@ -1598,6 +1606,227 @@ function normFreeText(s) {
 
     db.setSetting('last_import_at', db.nowStr());
     return { canceled: false };
+  });
+
+  // ---- Export: 回忆相册 (PDF) / 回忆视频 (MP4) -----------------------
+  //
+  // Material scope is strictly `memorial_events` + `memorial_event_photos`.
+  // No mixing with the reminder `events` table, contact avatars, or
+  // important dates — that's the brief from the user.
+  //
+  //   export:preview_filter  – filter counts + event summaries for the UI
+  //   export:pdf             – save dialog → build PDF
+  //   export:mp4             – save dialog → build MP4
+  //   export:cancel          – flip the killed flag for a running job
+  //
+  // Progress flows back through a one-way IPC channel: the renderer
+  // subscribes once to `export:progress` and updates its UI per message.
+  // We dedupe by jobId so two simultaneous exports don't trample each other.
+
+  function pushExportProgress(jobId, phase, percent, note) {
+    if (!winMain || winMain.isDestroyed()) return;
+    try {
+      winMain.webContents.send('export:progress', {
+        jobId, phase, percent, note: note || null,
+      });
+    } catch (e) {
+      console.error('[export] push progress failed:', e);
+    }
+  }
+
+  // Look up contact names for a set of contact_ids. We use this to fill
+  // the per-event `contact_names` field on preview responses (the table
+  // query returns ids only). One query, batched.
+  function resolveContactNames(ids) {
+    const set = new Set((ids || []).filter((x) => x != null));
+    if (set.size === 0) return new Map();
+    const placeholders = Array.from(set, () => '?').join(',');
+    const rows = db.all(`SELECT id, name FROM contacts WHERE id IN (${placeholders})`, Array.from(set));
+    const m = new Map();
+    for (const r of rows) m.set(r.id, r.name || '');
+    return m;
+  }
+
+  ipcMain.handle('export:preview_filter', (_e, filter = {}) => {
+    const contactIds = Array.isArray(filter.contactIds) && filter.contactIds.length
+      ? filter.contactIds.map(String)
+      : null;
+    const range = filter.range && (filter.range.start || filter.range.end)
+      ? {
+          start: filter.range.start || null,
+          end: filter.range.end || null,
+        }
+      : null;
+    const rows = db.listMemorialEventsForExport({
+      contactIds,
+      start: range ? range.start : null,
+      end: range ? range.end : null,
+    });
+    // Hydrate contact_names for the response (cheap one-shot).
+    const allIds = new Set();
+    for (const r of rows) (r.contact_ids || []).forEach((id) => allIds.add(id));
+    const nameMap = resolveContactNames(Array.from(allIds));
+    const events = rows.map((r) => ({
+      id: r.id,
+      kind: r.kind,
+      title: r.title,
+      occurred_at: r.occurred_at,
+      place: r.place,
+      photo_count: r.photo_count,
+      contact_ids: r.contact_ids || [],
+      contact_names: (r.contact_ids || []).map((id) => nameMap.get(id) || '').filter(Boolean),
+      first_photo_id: r.first_photo_id || null,
+      first_photo_relative_path: r.first_photo_relative_path || null,
+    }));
+    const eventCount = events.length;
+    const photoCount = events.reduce((acc, e) => acc + (e.photo_count || 0), 0);
+    return { eventCount, photoCount, events };
+  });
+
+  // Load the full event rows (with photos) for a chosen ordered id list.
+  // The renderer picks the order via the /export preview checkboxes.
+  function loadEventsForExport(eventIds) {
+    const out = [];
+    for (const id of eventIds) {
+      const ev = db.getMemorialEvent(String(id));
+      if (!ev) continue;
+      // getMemorialEvent returns photos as a side field (db.js:1006+).
+      // Defensive: if a future schema change drops it, hydrate via
+      // listPhotosForMemorialEvent.
+      if (!Array.isArray(ev.photos)) {
+        ev.photos = db.listPhotosForMemorialEvent(String(id));
+      }
+      out.push(ev);
+    }
+    return out;
+  }
+
+  ipcMain.handle('export:pdf', async (_e, payload = {}) => {
+    const eventIds = Array.isArray(payload.eventIds) ? payload.eventIds.map(String) : [];
+    if (eventIds.length === 0) throw new Error('未选择任何事件');
+    const stamp = backupStamp();
+    const result = await dialog.showSaveDialog(winMain, {
+      title: '导出回忆相册',
+      defaultPath: `memorypet-album-${stamp}.pdf`,
+      filters: [{ name: 'PDF 相册', extensions: ['pdf'] }],
+    });
+    if (result.canceled || !result.filePath) return { canceled: true };
+
+    const events = loadEventsForExport(eventIds);
+    if (events.length === 0) throw new Error('所选事件不存在或已被删除');
+
+    // We don't have a meaningful jobId for PDF (pdfkit runs in-process);
+    // the renderer still wants progress, so synthesize a stable id.
+    const jobId = `pdf-${Date.now().toString(36)}`;
+    const job = { killed: false, outPath: result.filePath };
+    activeExportJobs.set(jobId, job);
+
+    const cancelCheck = () => job.killed;
+    const progressCb = (phase, percent, note) => {
+      if (job.killed) return;
+      pushExportProgress(jobId, phase, percent, note);
+    };
+
+    // Forward the optional AlbumLayout from the WYSIWYG editor. When
+    // missing, buildAlbum falls back to the original 1-photo-per-page mode.
+    const layout = (payload && payload.layout) || null;
+
+    try {
+      const stats = await albumPdf.buildAlbum({
+        events,
+        layout,
+        outPath: result.filePath,
+        progressCb,
+      });
+      try { db.setSetting('last_pdf_export_at', db.nowStr()); } catch {}
+      return {
+        canceled: false,
+        path: result.filePath,
+        jobId,
+        stats: {
+          events: stats.events,
+          photos: stats.photos,
+          pages: stats.pages,
+          bytes: stats.bytes,
+          font: stats.font,
+          heicSkipped: stats.heicSkipped,
+          mode: stats.mode,
+        },
+      };
+    } catch (err) {
+      if (job.killed) {
+        try { fs.unlinkSync(result.filePath); } catch {}
+        return { canceled: true, jobId };
+      }
+      throw err;
+    } finally {
+      activeExportJobs.delete(jobId);
+    }
+  });
+
+  ipcMain.handle('export:mp4', async (_e, payload = {}) => {
+    const eventIds = Array.isArray(payload.eventIds) ? payload.eventIds.map(String) : [];
+    if (eventIds.length === 0) throw new Error('未选择任何事件');
+    const stamp = backupStamp();
+    const result = await dialog.showSaveDialog(winMain, {
+      title: '导出回忆视频',
+      defaultPath: `memorypet-album-${stamp}.mp4`,
+      filters: [{ name: 'MP4 视频', extensions: ['mp4'] }],
+    });
+    if (result.canceled || !result.filePath) return { canceled: true };
+
+    const events = loadEventsForExport(eventIds);
+    if (events.length === 0) throw new Error('所选事件不存在或已被删除');
+
+    const jobId = `mp4-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const job = { killed: false, outPath: result.filePath };
+    activeExportJobs.set(jobId, job);
+
+    const cancelCheck = () => job.killed;
+    const progressCb = (phase, percent, note) => {
+      if (job.killed) return;
+      pushExportProgress(jobId, phase, percent, note);
+    };
+
+    try {
+      const stats = await albumVideo.buildVideo({
+        events,
+        outPath: result.filePath,
+        options: { cancelCheck, progressCb },
+      });
+      try { db.setSetting('last_mp4_export_at', db.nowStr()); } catch {}
+      return {
+        canceled: false,
+        path: result.filePath,
+        jobId,
+        stats: {
+          events: stats.events,
+          photos: stats.photos,
+          segments: stats.segments,
+          durationSec: stats.durationSec,
+          bytes: stats.bytes,
+          font: stats.font,
+          heicSkipped: stats.heicSkipped,
+        },
+      };
+    } catch (err) {
+      if (job.killed || (err && err.killed)) {
+        try { fs.unlinkSync(result.filePath); } catch {}
+        return { canceled: true, jobId };
+      }
+      throw err;
+    } finally {
+      activeExportJobs.delete(jobId);
+    }
+  });
+
+  ipcMain.handle('export:cancel', (_e, payload = {}) => {
+    const jobId = payload && payload.jobId;
+    if (!jobId) return { ok: false, reason: 'no_job_id' };
+    const job = activeExportJobs.get(jobId);
+    if (!job) return { ok: false, reason: 'not_found' };
+    job.killed = true;
+    return { ok: true };
   });
 }
 

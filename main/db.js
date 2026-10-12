@@ -1042,6 +1042,80 @@ function listPhotosForMemorialEvent(id) {
   );
 }
 
+// Bulk variant of the memorial-events query, designed for the export pipeline.
+//
+// Returns every memorial event matching the filter with its contact-id array
+// and photo count in one round-trip. The list-page helper `listMemorialEvents`
+// does a per-row contact-names subselect — fine for the renderer but wasted
+// work for the export pipeline, which only needs ids for filtering (names
+// are already loaded client-side).
+//
+// opts:
+//   contactIds: string[] | null
+//     - null: no contact filter
+//     - string[]: keep events that link to AT LEAST ONE of these contacts
+//   start, end: 'YYYY-MM-DD HH:MM:SS' | null
+//     - occurred_at lower / upper bound (inclusive). null = unbounded.
+//
+// Output rows: { id, kind, title, place, food, outfit, activities, notes,
+//                occurred_at, contact_ids[], photo_count }, sorted by
+// occurred_at ASC so the export reads chronologically.
+function listMemorialEventsForExport(opts = {}) {
+  const args = [];
+  let where = '1=1';
+  if (opts.contactIds && Array.isArray(opts.contactIds) && opts.contactIds.length) {
+    const placeholders = opts.contactIds.map(() => '?').join(',');
+    where += ` AND EXISTS (
+      SELECT 1 FROM memorial_event_contacts mc
+       WHERE mc.memorial_event_id = me.id
+         AND mc.contact_id IN (${placeholders})
+    )`;
+    for (const cid of opts.contactIds) args.push(cid);
+  }
+  if (opts.start) {
+    where += ' AND me.occurred_at >= ?';
+    args.push(opts.start);
+  }
+  if (opts.end) {
+    where += ' AND me.occurred_at <= ?';
+    args.push(opts.end);
+  }
+  // JSON_GROUP_ARRAY is sql.js compatible (SQLite 3.38+ built-in JSON1).
+  // For older sql.js builds it may emit NULL on empty groups; we COALESCE.
+  const rows = all(
+    `SELECT me.id, me.kind, me.title, me.place, me.food, me.outfit,
+            me.activities, me.notes, me.occurred_at,
+            COALESCE(
+              (SELECT JSON_GROUP_ARRAY(mc.contact_id)
+                 FROM memorial_event_contacts mc
+                WHERE mc.memorial_event_id = me.id),
+              '[]'
+            ) AS contact_ids_json,
+            (SELECT COUNT(*) FROM memorial_event_photos p
+              WHERE p.memorial_event_id = me.id) AS photo_count,
+            (SELECT id FROM memorial_event_photos p
+              WHERE p.memorial_event_id = me.id
+              ORDER BY p.created_at ASC LIMIT 1) AS first_photo_id,
+            (SELECT relative_path FROM memorial_event_photos p
+              WHERE p.memorial_event_id = me.id
+              ORDER BY p.created_at ASC LIMIT 1) AS first_photo_relative_path
+       FROM memorial_events me
+      WHERE ${where}
+      ORDER BY me.occurred_at ASC, me.created_at ASC`,
+    args
+  );
+  for (const r of rows) {
+    try {
+      const arr = JSON.parse(r.contact_ids_json || '[]');
+      r.contact_ids = Array.isArray(arr) ? arr : [];
+    } catch {
+      r.contact_ids = [];
+    }
+    delete r.contact_ids_json;
+  }
+  return rows;
+}
+
 // ---- default festival seed ----
 // On first run (or any DB that doesn't yet have built-in festival events),
 // insert one row per built-in festival with category='general',
@@ -1155,6 +1229,7 @@ module.exports = {
   listAttributes, getAttribute,
   deleteContactCascade,
   listMemorialEvents, getMemorialEvent, listPhotosForMemorialEvent,
+  listMemorialEventsForExport,
   // Exposed so ipc.js can call them (avoids duplicating logic in IPC handlers).
   // These wrap require() at call-time so we don't introduce a require cycle
   // between db.js and the helpers.
