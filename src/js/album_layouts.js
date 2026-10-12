@@ -305,4 +305,25 @@ export {
   slotRect,
   slotRectCss,
   computePhotoDrawRect,
+  applyExifOrientation,
 };
+
+// EXIF orientation values 1..8 (per the TIFF/JPEG spec).
+// Values 5..8 rotate the image 90° (clockwise or counter-clockwise),
+// which means width and height are swapped in the rendered output.
+// We only care about the swap for cover-style draw math; pdfkit and
+// browsers apply the rotation transparently when given the file path.
+//
+//   1 = normal
+//   2 = mirror horizontal
+//   3 = rotate 180°
+//   4 = mirror vertical
+//   5 = mirror H + rotate 90° CCW
+//   6 = rotate 90° CW      ← the common phone-portrait case
+//   7 = mirror H + rotate 90° CW
+//   8 = rotate 90° CCW
+function applyExifOrientation(srcW, srcH, orientation) {
+  const o = Number(orientation) || 1;
+  if (o >= 5 && o <= 8) return { w: srcH, h: srcW };
+  return { w: srcW, h: srcH };
+}

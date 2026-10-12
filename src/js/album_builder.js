@@ -239,6 +239,8 @@ export function buildAlbumLayout(events, options = {}) {
           type: ts.type, // 'title' or 'caption'
           text: ts.type === 'title' ? `${evTitle} · ${evDate}` : fullCaption,
           textOffset: { x: 0, y: 0 },
+          fontScale: 1,
+          textAlign: ts.type === 'title' ? 'center' : 'left',
           _slotTemplate: { x: ts.x, y: ts.y, w: ts.w, h: ts.h, padding: ts.padding || 0 },
         });
       } else {
@@ -257,6 +259,8 @@ export function buildAlbumLayout(events, options = {}) {
             type: ts.type,
             text: txt,
             textOffset: { x: 0, y: 0 },
+            fontScale: 1,
+            textAlign: ts.type === 'title' ? 'center' : 'left',
             _slotTemplate: { x: ts.x, y: ts.y, w: ts.w, h: ts.h, padding: ts.padding || 0 },
           });
         }
@@ -352,6 +356,8 @@ export function remapPageTemplate(page, newTemplateId, ctx = {}) {
         ts.type === 'title' ? `${evTitle} · ${evDate}` : fullCaption
       ),
       textOffset: (carried && carried.textOffset) || { x: 0, y: 0 },
+      fontScale: (carried && carried.fontScale) || 1,
+      textAlign: (carried && carried.textAlign) || (ts.type === 'title' ? 'center' : 'left'),
       _slotTemplate: { x: ts.x, y: ts.y, w: ts.w, h: ts.h, padding: ts.padding || 0 },
     });
   } else {
@@ -370,6 +376,8 @@ export function remapPageTemplate(page, newTemplateId, ctx = {}) {
         type: ts.type,
         text: txt,
         textOffset: (carried && carried.textOffset) || { x: 0, y: 0 },
+        fontScale: (carried && carried.fontScale) || 1,
+        textAlign: (carried && carried.textAlign) || (ts.type === 'title' ? 'center' : 'left'),
         _slotTemplate: { x: ts.x, y: ts.y, w: ts.w, h: ts.h, padding: ts.padding || 0 },
       });
     }
@@ -379,6 +387,10 @@ export function remapPageTemplate(page, newTemplateId, ctx = {}) {
     templateId: newTemplateId,
     eventId: page.eventId,
     slots: newSlots,
+    // Free-form text boxes are page-level decoration; carry them over
+    // unchanged when the template changes. We don't touch their
+    // coordinates because they're in pt, not normalized to the template.
+    freeTexts: Array.isArray(page.freeTexts) ? page.freeTexts.slice() : [],
   };
 }
 

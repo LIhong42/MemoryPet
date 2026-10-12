@@ -61,6 +61,10 @@ contextBridge.exposeInMainWorld('mp', {
       // bypass the CSP `default-src 'self'` rule that prevents custom protocol
       // schemes from being loaded into <img>.
       read:   (photoId)         => ipcRenderer.invoke('memorial_events:photo_read', photoId),
+      // Returns { width, height } using pdfkit's openImage(), so dims are
+      // post-EXIF-orientation. Used by the album editor to keep cover-fit
+      // math consistent with the PDF renderer.
+      meta:   (photoId)         => ipcRenderer.invoke('memorial_events:photo_meta', photoId),
     },
   },
   // reminders

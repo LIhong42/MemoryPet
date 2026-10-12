@@ -426,8 +426,21 @@ async function renderLayoutMode({ doc, layout, events, photoIndex, heicSkipped, 
       } else {
         const text = (content && content.text) || '';
         const textOffset = (content && content.textOffset) || { x: 0, y: 0 };
-        if (text) renderTextSlot(doc, text, r, theme, tSlot.type, textOffset);
+        const fontScale = (content && typeof content.fontScale === 'number') ? content.fontScale : 1;
+        const textAlign = (content && content.textAlign) || (tSlot.type === 'title' ? 'center' : 'left');
+        if (text) renderTextSlot(doc, text, r, theme, tSlot.type, textOffset, fontScale, textAlign, {
+          color: content.color,
+          bold: content.bold === true,
+          italic: content.italic === true,
+        });
       }
+    }
+    // ---- Free-form text boxes (PPT-style floating frames). Drawn after
+    // every template slot so they sit on top of photos AND on top of
+    // template text. Stored in pt units — same as the editor.
+    const fts = Array.isArray(page.freeTexts) ? page.freeTexts : [];
+    for (let f = 0; f < fts.length; f += 1) {
+      renderFreeTextBox(doc, fts[f], pageDims);
     }
     // Page footer (small caption)
     doc.fontSize(8).fillColor(theme.cssVar.muted)
@@ -577,7 +590,10 @@ function renderPhotoPlaceholder(doc, r, theme, photo) {
      .text(note, r.x, r.y + r.h / 2 - 6, { width: r.w, align: 'center' });
 }
 
-function renderTextSlot(doc, text, r, theme, slotType, textOffset) {
+function renderTextSlot(doc, text, r, theme, slotType, textOffset, fontScale, textAlign, opts) {
+  // Backwards compatible: callers that don't pass opts get the original
+  // (size + color + weight by slot type, no per-slot color/bold/italic).
+  const o = opts || {};
   // Pick size + weight by slot type
   let size, weight, color;
   if (slotType === 'title') {
@@ -589,14 +605,20 @@ function renderTextSlot(doc, text, r, theme, slotType, textOffset) {
     weight = theme.weight.caption;
     color = theme.cssVar.text;
   }
-  doc.fillColor(color);
-  doc.fontSize(size);
-  if (weight === 'bold' && doc._fontFamilies && doc._fontFamilies.CJK) {
-    // pdfkit doesn't expose a real bold variant for our CJK font; we just
-    // rely on size emphasis. For Helvetica we have access to 'Helvetica-Bold'.
-    // Skip the runtime swap and accept the visual difference.
-  }
-  const align = slotType === 'title' ? 'center' : 'left';
+  // Per-slot font scale (user-controlled via the inspector slider).
+  // Defaults to 1.0 so existing layouts render unchanged.
+  const scale = (typeof fontScale === 'number' && fontScale > 0) ? fontScale : 1;
+  // Per-slot overrides: color > theme, bold === true ? bold : theme, italic
+  const useColor = (typeof o.color === 'string' && o.color) ? o.color : color;
+  const useBold  = (o.bold === true) ? true : (weight === 'bold');
+  const useItalic = (o.italic === true);
+  doc.fillColor(useColor);
+  doc.fontSize(size * scale);
+  // pickFont picks a registered family based on text content (CJK vs
+  // Latin). CJK bold is a known limitation — no variant registered.
+  const family = pickFont(doc, text, useBold ? 'bold' : 'normal', useItalic);
+  try { doc.font(family); } catch (e) { /* fall through to whatever font was current */ }
+  const align = textAlign || (slotType === 'title' ? 'center' : 'left');
   // Apply user-controlled text offset (in pt) on top of the slot rect.
   // textOffset.x/y are signed values, typically in the range -r.w .. r.w
   // and -r.h .. r.h.
@@ -610,6 +632,99 @@ function renderTextSlot(doc, text, r, theme, slotType, textOffset) {
     lineGap: theme.lineGap,
     ellipsis: true,
   });
+}
+
+// ---- Free-form text box (PPT-style floating frame) -----------------------
+//
+// Coordinates are in pt; matches the editor (px = pt * scale) 1:1. We
+// always save/restore the graphics state so any local font / color /
+// lineWidth change is contained.
+//
+// CJK bold note: pdfkit cannot swap CJK font variants at runtime
+// (we register one CJK family in buildAlbum). When the user enables
+// bold on a CJK-containing text, we still set the size with a small
+// visual boost and accept that the typeface stays regular. This is a
+// known limitation; see pickFont() below.
+
+function isCjkChar(ch) {
+  if (!ch) return false;
+  const c = ch.codePointAt(0);
+  // CJK Unified Ideographs + extensions + Hiragana/Katakana + Hangul
+  return (c >= 0x4E00 && c <= 0x9FFF)
+      || (c >= 0x3400 && c <= 0x4DBF)
+      || (c >= 0x3040 && c <= 0x30FF)
+      || (c >= 0xAC00 && c <= 0xD7AF)
+      || (c >= 0x3000 && c <= 0x303F)
+      || (c >= 0xFF00 && c <= 0xFFEF);
+}
+
+function textHasCjk(s) {
+  if (!s) return false;
+  for (let i = 0; i < s.length; i += 1) {
+    if (isCjkChar(s[i])) return true;
+  }
+  return false;
+}
+
+// Pick the best font for the given text. Returns a pdfkit-registered
+// family name. If the registered families include a CJK family and
+// the text contains CJK, we use the CJK family (bold/italic are
+// best-effort — pdfkit has no CJK bold variant).
+function pickFont(doc, text, weight = 'normal', italic = false) {
+  const cjkAvailable = doc._fontFamilies && doc._fontFamilies.CJK;
+  if (cjkAvailable && textHasCjk(text)) {
+    return 'CJK';
+  }
+  if (weight === 'bold' && italic) return 'Helvetica-BoldOblique';
+  if (weight === 'bold') return 'Helvetica-Bold';
+  if (italic) return 'Helvetica-Oblique';
+  return 'Helvetica';
+}
+
+function renderFreeTextBox(doc, ft, pageDims) {
+  if (!ft || !ft.text) return;
+  // Clamp geometry defensively; the editor should keep things in range
+  // but we don't trust user-saved JSON.
+  const x = Math.max(0, Number(ft.x) || 0);
+  const y = Math.max(0, Number(ft.y) || 0);
+  const w = Math.max(20, Number(ft.w) || 200);
+  const h = Math.max(20, Number(ft.h) || 60);
+  const pad = Math.max(0, Math.min(20, Number(ft.padding) || 0));
+  const fontSize = Math.max(6, Math.min(96, Number(ft.fontSize) || 12));
+  doc.save();
+
+  // Background fill (optional)
+  if (ft.backgroundColor) {
+    try {
+      doc.fillColor(ft.backgroundColor).rect(x, y, w, h).fill();
+    } catch (e) { /* ignore bad color */ }
+  }
+
+  // Border (optional, only when both color and width > 0)
+  if (ft.borderColor && Number(ft.borderWidth) > 0) {
+    try {
+      doc.lineWidth(Number(ft.borderWidth))
+         .strokeColor(ft.borderColor)
+         .rect(x, y, w, h)
+         .stroke();
+    } catch (e) { /* ignore */ }
+  }
+
+  // Text
+  const family = pickFont(doc, ft.text, ft.fontWeight, ft.fontStyle);
+  try { doc.font(family); } catch (e) { doc.font('Helvetica'); }
+  const textColor = ft.color || '#2a2a2a';
+  try { doc.fillColor(textColor); } catch (e) { doc.fillColor('#2a2a2a'); }
+  doc.fontSize(fontSize);
+  // text() wraps by width; ellipsis truncates overflow
+  doc.text(String(ft.text), x + pad, y + pad, {
+    width:  w - 2 * pad,
+    height: h - 2 * pad,
+    align:  ft.textAlign || 'left',
+    lineGap: 1,
+    ellipsis: true,
+  });
+  doc.restore();
 }
 
 // ---- LEGACY MODE -----------------------------------------------------------
