@@ -234,18 +234,18 @@ window.addEventListener('mouseup', async () => {
   pressing = false;
   sprite.classList.remove('dragging');
   if (didDrag) return;
+  // Non-drag single click is now a no-op — the main window is gated by a
+  // 4-digit PIN and must be opened via right-click → "打开主窗口". We
+  // still pause movement briefly for tactile feedback, and in REMINDER
+  // state we dismiss the floating bubble (it would otherwise stay glued
+  // to the pet until acknowledged).
+  try { M.pet.setPaused(2000); } catch {}
   try {
     const s = await M.pet.getState();
     if (s && s.state === 'REMINDER') {
       clearReminderBubble();
-      await M.pet.openReminder();
-    } else {
-      await M.pet.showMain();
     }
-  } catch (err) {
-    console.error('pet click error', err);
-    try { await M.pet.showMain(); } catch {}
-  }
+  } catch {}
 });
 
 window.addEventListener('contextmenu', (e) => {

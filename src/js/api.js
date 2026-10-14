@@ -104,6 +104,10 @@ export const api = {
   },
   app: {
     quit: () => M.app.quit(),
+    // PIN gate (see main/auth.js). Renderer never sees the salt/hash —
+    // only `{ ok: boolean }` round-trips through these wrappers.
+    verifyPin: (pin) => M.app.verifyPin(pin),
+    setPin:    (pin) => M.app.setPin(pin),
   },
   backup: {
     export: () => M.backup.export(),

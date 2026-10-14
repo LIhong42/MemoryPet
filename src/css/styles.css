@@ -2288,3 +2288,46 @@ button.chip:hover { filter: brightness(0.97); }
 .album-inspector-hint strong {
   color: var(--theme-accent, #f4a8a0);
 }
+
+/* ---- PIN lock ---- */
+/* When the renderer is locked, hide the app shell and force-show the PIN
+   modal. The modal has no close button on purpose (see src/index.html),
+   so the only way out is entering the correct 4-digit PIN. */
+body.locked .topbar,
+body.locked #app { display: none !important; }
+/* Default for the pin-modal when unlocked: same as other modal-backdrops
+   that are hidden via .hidden. body.locked #pin-modal below overrides
+   when locked. */
+#pin-modal { display: none; }
+body.locked #pin-modal { display: grid; }
+body.locked #pin-modal.hidden { display: none !important; }
+
+.pin-modal { width: 360px; max-width: 92vw; }
+.pin-cells {
+  display: flex; gap: 10px; justify-content: center;
+  margin: 18px 0 8px;
+}
+.pin-cell {
+  width: 52px; height: 60px;
+  font-size: 28px; text-align: center;
+  padding: 0;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  font-family: inherit;
+  background: white;
+  caret-color: var(--accent);
+}
+.pin-cell:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.pin-error { color: var(--danger); font-size: 12px; text-align: center; margin: 4px 0 12px; }
+@keyframes pin-shake {
+  10%, 90% { transform: translateX(-1px); }
+  20%, 80% { transform: translateX(2px); }
+  30%, 50%, 70% { transform: translateX(-4px); }
+  40%, 60% { transform: translateX(4px); }
+}
+.pin-cells.shake { animation: pin-shake 360ms ease-in-out; }
+.pin-cells.shake .pin-cell { border-color: var(--danger); }

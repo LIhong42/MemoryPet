@@ -14,6 +14,7 @@ const { petRenderSize } = require('./pet_controller');
 const albumPdf = require('./album_pdf');
 const PDFDocument = require('pdfkit');
 const albumVideo = require('./album_video');
+const { verifyPin, hashPin, isValidPinShape } = require('./auth');
 
 // Tracks in-flight export jobs so the renderer can cancel them via
 // `export:cancel`. The value is a mutable record: { killed, outPath? }.
@@ -1161,6 +1162,31 @@ function normFreeText(s) {
   ipcMain.handle('settings:get', (_e, key) => db.getSetting(key));
   ipcMain.handle('settings:set', (_e, key, value) => { db.setSetting(key, value); return true; });
 
+  // ---- App PIN gate ----
+  // The renderer must never see the salt/hash. verifyPin runs scrypt
+  // server-side and returns only { ok: boolean }; the UI treats any false
+  // (including shape errors) as "wrong PIN" so a tampered renderer can't
+  // enumerate "did I get the shape wrong?".
+  ipcMain.handle('app:verify_pin', (_e, pin) => {
+    const stored = db.getSetting('app_pin_hash');
+    if (!stored) return { ok: false };
+    if (!isValidPinShape(pin)) return { ok: false };
+    return { ok: verifyPin(pin, stored) };
+  });
+
+  ipcMain.handle('app:set_pin', (_e, newPin) => {
+    if (!isValidPinShape(newPin)) {
+      return { ok: false, reason: 'shape' };
+    }
+    try {
+      db.setSetting('app_pin_hash', hashPin(newPin));
+      return { ok: true };
+    } catch (e) {
+      console.error('app:set_pin failed:', e);
+      return { ok: false, reason: 'hash' };
+    }
+  });
+
   ipcMain.handle('pet:set_position', (_e, x, y) => {
     db.setSetting('pet_x', String(x));
     db.setSetting('pet_y', String(y));
@@ -1445,41 +1471,23 @@ function normFreeText(s) {
   });
 
   // ---- Pet right-click context menu (native Electron Menu at cursor) ----
+  // Two actionable items only: open the (PIN-gated) main window, or quit.
+  // The previous "设置…" entry was removed because settings should only be
+  // reachable from inside the main window — and the main window itself is
+  // now protected by a PIN. The renderer re-locks on every visibility
+  // restoration, so the menu doesn't need to send `main:open-reminder`
+  // itself; the renderer hook in src/js/auth.js handles reminder replay
+  // after unlock.
   ipcMain.handle('pet:context_menu', () => {
-    const state = getPetState() ? 'REMINDER' : 'NORMAL';
-    const reminderLabel = state === 'REMINDER' ? '查看提醒' : '打开主窗口';
     const menu = Menu.buildFromTemplate([
       { label: '🐾 MemoryPet', enabled: false },
       { type: 'separator' },
       {
-        label: reminderLabel,
-        click: () => {
-          if (state === 'REMINDER') {
-            // Open main window + pop the reminder modal.
-            if (winMain && !winMain.isDestroyed()) {
-              winMain.show();
-              winMain.focus();
-              const head = queue.activeHead();
-              if (head) {
-                winMain.webContents.send('main:open-reminder', {
-                  source: head.source,
-                  source_id: head.source_id,
-                });
-              }
-            }
-          } else if (winMain && !winMain.isDestroyed()) {
-            winMain.show();
-            winMain.focus();
-          }
-        },
-      },
-      {
-        label: '设置…',
+        label: '打开主窗口',
         click: () => {
           if (winMain && !winMain.isDestroyed()) {
             winMain.show();
             winMain.focus();
-            winMain.webContents.send('main:navigate', '/settings');
           }
         },
       },

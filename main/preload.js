@@ -118,6 +118,10 @@ contextBridge.exposeInMainWorld('mp', {
   },
   app: {
     quit: () => ipcRenderer.invoke('app:quit'),
+    // PIN gate: server-side verify + change. Renderer never sees the
+    // stored hash / salt — only `{ ok: boolean }` round-trips.
+    verifyPin: (pin) => ipcRenderer.invoke('app:verify_pin', pin),
+    setPin:    (pin) => ipcRenderer.invoke('app:set_pin', pin),
   },
   // Backup / restore. Two-step import (pick → apply) so the renderer can
   // surface a confirm() dialog between picking the zip and overwriting the

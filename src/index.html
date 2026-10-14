@@ -52,6 +52,28 @@
     </div>
   </div>
 
+  <!-- PIN lock modal: shown on every main-window show.
+       No close button on purpose — clicking X must not bypass auth. -->
+  <div class="modal-backdrop" id="pin-modal" data-no-close="1">
+    <div class="modal pin-modal">
+      <div class="modal-header">
+        <h3>请输入访问密码</h3>
+      </div>
+      <div class="modal-body">
+        <div class="pin-cells" id="pin-cells" autocomplete="off">
+          <input class="pin-cell" inputmode="numeric" pattern="[0-9]*" maxlength="1" aria-label="第 1 位" />
+          <input class="pin-cell" inputmode="numeric" pattern="[0-9]*" maxlength="1" aria-label="第 2 位" />
+          <input class="pin-cell" inputmode="numeric" pattern="[0-9]*" maxlength="1" aria-label="第 3 位" />
+          <input class="pin-cell" inputmode="numeric" pattern="[0-9]*" maxlength="1" aria-label="第 4 位" />
+        </div>
+        <p class="pin-error hidden" id="pin-error">密码错误，请重试。</p>
+        <div class="modal-actions">
+          <button class="btn" id="pin-unlock" disabled>解锁</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast -->
   <div id="toast-container"></div>
 

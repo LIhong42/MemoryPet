@@ -64,6 +64,30 @@ async function render() {
     </div>
 
     <div class="card">
+      <h2>访问密码</h2>
+      <p class="meta">4 位数字。修改后下次打开主窗口时生效。</p>
+      <div class="form-row">
+        <div class="field">
+          <label>当前密码</label>
+          <input type="password" inputmode="numeric" pattern="\d{4}" maxlength="4" id="pin-current" autocomplete="off"/>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="field">
+          <label>新密码</label>
+          <input type="password" inputmode="numeric" pattern="\d{4}" maxlength="4" id="pin-new" autocomplete="off"/>
+        </div>
+        <div class="field">
+          <label>确认新密码</label>
+          <input type="password" inputmode="numeric" pattern="\d{4}" maxlength="4" id="pin-confirm" autocomplete="off"/>
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <button class="btn" id="pin-change">修改密码</button>
+      </div>
+    </div>
+
+    <div class="card">
       <h2>应用</h2>
       <button class="btn danger" id="quit-app">退出 MemoryPet</button>
       <p class="meta" style="margin-top:8px">点击后关闭整个应用，包括桌面宠物。</p>
@@ -137,6 +161,26 @@ async function render() {
   document.getElementById('quit-app').onclick = async () => {
     if (!confirm('确认退出 MemoryPet？')) return;
     await api.app.quit();
+  };
+  document.getElementById('pin-change').onclick = async () => {
+    const cur = document.getElementById('pin-current').value;
+    const nw  = document.getElementById('pin-new').value;
+    const cf  = document.getElementById('pin-confirm').value;
+    if (!/^\d{4}$/.test(cur)) { toast('请输入当前 4 位密码'); return; }
+    if (!/^\d{4}$/.test(nw))  { toast('新密码必须是 4 位数字'); return; }
+    if (nw !== cf)            { toast('两次输入的新密码不一致'); return; }
+    try {
+      const v = await api.app.verifyPin(cur);
+      if (!v || !v.ok) { toast('当前密码错误'); return; }
+      const r = await api.app.setPin(nw);
+      if (!r || !r.ok) { toast('密码修改失败'); return; }
+      toast('密码已更新');
+      document.getElementById('pin-current').value = '';
+      document.getElementById('pin-new').value = '';
+      document.getElementById('pin-confirm').value = '';
+    } catch (e) {
+      toast('修改失败：' + ((e && e.message) || e));
+    }
   };
 }
 

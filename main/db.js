@@ -192,6 +192,7 @@ async function open(dbPathArg) {
   migrateMemorialEventsV1();
   migrateMemorialEventsV2();
   seedDefaultFestivals();
+  migratePinV1();
 
   // Settings defaults
   const s = db.prepare('SELECT value FROM settings WHERE key = ?');
@@ -1215,6 +1216,22 @@ function seedDefaultFestivals() {
     setSetting(SETTINGS_DEFAULT_FESTIVALS_KEY, '1');
   } catch (e) {
     console.error('default festival seed failed:', e);
+  }
+}
+
+// ---- App PIN migration ----
+// First-launch only: if `app_pin_hash` is absent (legacy DB or fresh
+// install), seed it with scrypt("8888") so the renderer lock has something
+// to verify against. Idempotent: once set, getSetting() short-circuits the
+// hash call. Lazy-require `./auth` to avoid a require cycle.
+function migratePinV1() {
+  if (!db) return;
+  if (getSetting('app_pin_hash')) return;
+  try {
+    const { hashPin } = require('./auth');
+    setSetting('app_pin_hash', hashPin('8888'));
+  } catch (e) {
+    console.error('migratePinV1 failed:', e);
   }
 }
 

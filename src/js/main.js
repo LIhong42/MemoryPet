@@ -1,6 +1,7 @@
 // src/js/main.js — entry point, wires router, navigation active link, reminder modal, pet state pill
 import { api, escapeHtml, fmtDateTime, toast } from './api.js';
 import { register, onChange, start } from './router.js';
+import { start as startAuth, registerLockedEventHandlers } from './auth.js';
 import './pages/today.js';
 import './pages/contacts_list.js';
 import './pages/contact_detail.js';
@@ -93,13 +94,11 @@ api.on('pet:state-changed', (payload) => {
   }
 });
 
-api.on('main:open-reminder', async (payload) => {
-  // Fetch the active reminder matching payload source_id
-  const active = await api.reminders.listActive();
-  const r = active.find((x) => x.source === payload.source && x.source_id === payload.source_id)
-            || active[0];
-  if (r) showReminderModal(r);
-});
+// Hand `main:open-reminder` over to the auth module — it buffers the event
+// while the PIN modal is locked and replays it (via the CustomEvent below)
+// once the user unlocks. Without this hop the reminder modal would pop
+// against an empty DOM while the lock UI is on top.
+registerLockedEventHandlers();
 
 // Allow the main process (e.g. pet context menu) to push a hash route.
 api.on('main:navigate', (path) => {
@@ -122,4 +121,8 @@ onChange(updateActiveLink);
 // Initial pet pill state
 api.pet.getState().then(updatePetPill);
 
+// Lock the window first (body.locked hides #app / .topbar). The router
+// still mounts and the pet pill state still resolves — they're harmless
+// behind the lock UI and they keep the renderer warm so unlock is instant.
+startAuth();
 start();
