@@ -8,9 +8,8 @@ const { fmtDateTime, computeNextFireEvent } = require('./time_util');
 const { validateLunar } = require('./lunar');
 const { listFestivals, festivalLabel } = require('./festivals');
 const {
-  readFolderPack, readZipPack, installPack, removeImported,
-  isImportedId, readManifestExtras,
-} = require('./pet_pack_import');
+  installPetZip, removeImported,
+} = require('./pet_zip_import');
 const { petRenderSize } = require('./pet_controller');
 const albumPdf = require('./album_pdf');
 const PDFDocument = require('pdfkit');
@@ -1232,30 +1231,26 @@ function normFreeText(s) {
     });
   }
 
-  // ---- Pet pack import (desktop-pet style adapter) ----
-  // These four handlers layer on top of the existing PetRegistry without
-  // changing it. They:
-  //   * surface a per-pet "is imported / origin / importedAt / description"
-  //     view that the registry doesn't track itself;
-  //   * pop a native file/folder picker, validate the pack, slice the
-  //     spritesheet into per-frame PNGs, and install the result into
-  //     `<userData>/MemoryPet/pets/imported-<hash>/`;
-  //   * delete an imported pet directory; if the deletion would orphan the
-  //     current pet, switch back to the first built-in first.
+  // ---- Pet import (frame-directory zip) ----
+  // Users ship a zip whose contents already match the on-disk layout of
+  // `resources/pets/default/`: variant directories (`default/`,
+  // `reminder/`, `walking.right/`, `walking.left/`) each holding
+  // `<name>_NNN_NNNN.png` frames. `pet_zip_import.installPetZip` writes a
+  // matching `manifest.json` into `<userData>/MemoryPet/pets/imported-<hash>/`
+  // so the existing PetRegistry can pick it up unchanged.
   //
-  // The legacy `pet:list / get_current / set_current` channels are unchanged,
-  // so the settings page dropdown and the new /pets page share the same
-  // registry view of the world.
+  // Handlers:
+  //   pet:list_installed  — registry entries decorated with origin /
+  //                          importedAt / description (now read straight
+  //                          off the manifest.json the importer wrote).
+  //   pet:import_from_zip — opens a picker, installs the zip, rescan.
+  //   pet:remove_imported — drops an imported directory; if the user was
+  //                          using it, switches to the first built-in
+  //                          first.
 
-  // Resolve the userDataPath the same way PetRegistry.init() does so
-  // installPack / removeImported land in the right place.
-  //
-  // Returns the user-data *parent* directory (`<appData>/MemoryPet`), not
-  // `<appData>/MemoryPet/pets`. `installPack` / `removeImported` /
-  // `readManifestExtras` each append `pets/` themselves, so passing the
-  // already-suffixed path made imports land at
-  // `<appData>/MemoryPet/pets/pets/imported-<hash>/` — outside what
-  // `petRegistry.rescan()` scans, and silently invisible to /pets.
+  // userData parent — `installPetZip` and `removeImported` each append
+  // `pets/` themselves, so this is the directory the existing
+  // `PetRegistry.init({ userDataPath })` was told about.
   function getPetsUserDataPath() {
     return path.join(app.getPath('appData'), 'MemoryPet');
   }
@@ -1269,20 +1264,23 @@ function normFreeText(s) {
     return builtin ? builtin.id : null;
   }
 
-  // Decorate a registry entry with the manifest extras the /pets UI needs
-  // (description, origin, importedAt). Built-in pets get a stub object so
-  // the UI can render them with the same shape.
+  // Imported manifests already carry description/origin/importedAt — read
+  // them straight from disk so the /pets UI doesn't have to second-guess
+  // what the registry is showing. Built-ins get a stub object so the UI
+  // renders them with the same shape.
   function decoratePetEntry(pet) {
-    const userData = getPetsUserDataPath();
     if (String(pet.id).startsWith('imported-')) {
-      const extras = readManifestExtras(userData, pet.id) || {};
-      return {
-        ...pet,
-        description: extras.description || '',
-        source: 'imported',
-        origin: extras.origin || null,
-        importedAt: extras.importedAt || null,
-      };
+      const mPath = path.join(getPetsUserDataPath(), 'pets', pet.id, 'manifest.json');
+      let description = '';
+      let origin = null;
+      let importedAt = null;
+      try {
+        const m = JSON.parse(fs.readFileSync(mPath, 'utf8'));
+        if (m && typeof m.description === 'string') description = m.description;
+        if (m && (m.origin === 'zip' || m.origin === 'folder')) origin = m.origin;
+        if (m && typeof m.importedAt === 'string') importedAt = m.importedAt;
+      } catch {}
+      return { ...pet, description, source: 'imported', origin, importedAt };
     }
     return {
       ...pet,
@@ -1298,50 +1296,29 @@ function normFreeText(s) {
     return petRegistry.list().map(decoratePetEntry);
   });
 
-  ipcMain.handle('pet:import_from_folder', async () => {
-    if (!petRegistry) throw new Error('pet registry unavailable');
-    const pick = await dialog.showOpenDialog(winMain, {
-      title: '从文件夹导入桌宠',
-      properties: ['openDirectory'],
-    });
-    if (pick.canceled || !pick.filePaths || !pick.filePaths.length) {
-      return { canceled: true };
-    }
-    const folder = pick.filePaths[0];
-    const pack = readFolderPack(folder);
-    const installed = installPack(pack, getPetsUserDataPath());
-    petRegistry.rescan();
-    return {
-      ok: true,
-      deduped: !!installed.deduped,
-      pet: { id: installed.id, name: pack.manifest.raw.name || 'Imported Character' },
-    };
-  });
-
   ipcMain.handle('pet:import_from_zip', async () => {
     if (!petRegistry) throw new Error('pet registry unavailable');
     const pick = await dialog.showOpenDialog(winMain, {
-      title: '从 ZIP 导入桌宠',
+      title: '上传桌宠压缩包',
       properties: ['openFile'],
-      filters: [{ name: '桌宠包', extensions: ['zip'] }],
+      filters: [{ name: '桌宠压缩包', extensions: ['zip'] }],
     });
     if (pick.canceled || !pick.filePaths || !pick.filePaths.length) {
       return { canceled: true };
     }
     const zip = pick.filePaths[0];
-    const pack = readZipPack(zip);
-    const installed = installPack(pack, getPetsUserDataPath());
+    const installed = installPetZip(zip, getPetsUserDataPath());
     petRegistry.rescan();
     return {
       ok: true,
       deduped: !!installed.deduped,
-      pet: { id: installed.id, name: pack.manifest.raw.name || 'Imported Character' },
+      pet: { id: installed.pet.id, name: installed.pet.name },
     };
   });
 
   ipcMain.handle('pet:remove_imported', (_e, petId) => {
     if (!petRegistry) throw new Error('pet registry unavailable');
-    if (!isImportedId(petId)) {
+    if (typeof petId !== 'string' || !petId.startsWith('imported-')) {
       throw new Error('非导入桌宠不可删除');
     }
     let switchedTo = null;

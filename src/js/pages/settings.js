@@ -43,11 +43,10 @@ async function render() {
         桌宠文件夹位于 <code>resources/pets/<id>/</code>，每个桌宠自带 <code>manifest.json</code> 描述自己的动作。
       </p>
 
-      <h3 style="margin-top:18px;">导入桌宠包</h3>
-      <p class="meta">支持 desktop-pet 风格的角色包：包含 <code>character.json</code> + <code>sprite.png</code> + <code>preview.png</code>。导入时会自动把动作表切成本项目的逐帧 PNG。</p>
+      <h3 style="margin-top:18px;">上传桌宠压缩包</h3>
+      <p class="meta">压缩包内需要按动作分目录放帧文件：<code>default/</code>、<code>reminder/</code>、<code>walking.left/</code>、<code>walking.right/</code>（后三个可选）。每个目录下放 <code><name>_NNN_NNNN.png</code> 命名的帧，其中 <code>NNN</code> 为帧序号、最后四位为该帧播放毫秒数。压缩包可以包一层顶层目录，也可以直接放帧目录。上传后系统会自动生成 <code>manifest.json</code> 并立即生效。</p>
       <div class="row" style="gap:8px; margin-top:10px; flex-wrap:wrap;">
-        <button class="btn" id="import-from-zip">从 ZIP 导入…</button>
-        <button class="btn secondary" id="import-from-folder">从文件夹导入…</button>
+        <button class="btn" id="import-from-zip">上传桌宠压缩包…</button>
       </div>
 
       <div id="installed-pets-list" style="margin-top:14px;"></div>
@@ -90,18 +89,7 @@ async function render() {
     try {
       const r = await api.pet.importFromZip?.();
       if (!r || r.canceled) return;
-      if (r.deduped) toast(`已存在同名桌宠：${r.pet.name}`);
-      else            toast(`已导入：${r.pet.name}`);
-      render();
-    } catch (e) {
-      toast('导入失败：' + ((e && e.message) || e));
-    }
-  };
-  document.getElementById('import-from-folder').onclick = async () => {
-    try {
-      const r = await api.pet.importFromFolder?.();
-      if (!r || r.canceled) return;
-      if (r.deduped) toast(`已存在同名桌宠：${r.pet.name}`);
+      if (r.deduped) toast(`已存在同内容桌宠：${r.pet.name}`);
       else            toast(`已导入：${r.pet.name}`);
       render();
     } catch (e) {

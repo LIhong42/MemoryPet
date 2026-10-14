@@ -1,0 +1,353 @@
+// main/pet_zip_import.js — install a "frame-directory" pet zip into the
+// user-data PetRegistry tree.
+//
+// Accepted shape (mirrors `resources/pets/default/`):
+//   <root>/default/<name>_NNN_NNNN.png
+//   <root>/reminder/<name>_NNN_NNNN.png
+//   <root>/walking.right/<name>_NNN_NNNN.png
+//   <root>/walking.left/<name>_NNN_NNNN.png
+//
+// The root directory may be the zip's top-level entry (when the zip wraps
+// the frames in a single folder, like the project's example.zip), or
+// absent entirely (when frames sit at the zip root). Anything else is
+// ignored — e.g. a `runningRight/` folder would be silently skipped
+// today; the `default` variant is the only one strictly required.
+//
+// The on-disk layout we publish is identical to the built-in `default` /
+// `luna` packs, so the existing PetRegistry (`main/pet_registry.js`) can
+// pick it up with no further changes.
+//
+// installPetZip(zipPath, userDataPath)
+//   → { ok, deduped, pet: { id, name }, rootDir }
+//   → throws on invalid input (bad zip / no usable variant / IO error)
+
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
+const AdmZip = require('adm-zip');
+
+// Hard caps. Generous enough for a 6-action pack at 8 frames each with
+// ~500 KB PNGs (≈ 24 MB), tight enough that a single zip can't fill the
+// user-data disk.
+const MAX_TOTAL_BYTES = 256 * 1024 * 1024;   // 256 MiB total unpacked
+const MAX_ENTRIES     = 1024;
+const MAX_PNG_BYTES   = 32 * 1024 * 1024;    // 32 MiB per single PNG
+
+// Frame-naming convention used by PetRegistry.parseFrames():
+//   ^(.*?)_(\d{3})_(\d{3,4})\.png$
+const FRAME_REGEX_SRC = '^(.*?)_(\\d{3})_(\\d{3,4})\\.png$';
+const FRAME_RE = new RegExp(FRAME_REGEX_SRC, 'i');
+
+// Variant directory → manifest.variants key. `walking.right` and
+// `walking.left` collapse into a single `walking` variant whose two roots
+// let the registry pick a direction; `default` and `reminder` are 1:1.
+// All other directory names are ignored (silently skipped) — they don't
+// match anything the renderer can play today, but we don't want a stray
+// `runningRight/` folder to break an otherwise-valid pack.
+const VARIANT_DIRS = {
+  'default':       { key: 'default',  slot: null },
+  'reminder':      { key: 'reminder', slot: null },
+  'walking.right': { key: 'walking',  slot: 'right' },
+  'walking.left':  { key: 'walking',  slot: 'left'  },
+};
+
+// Reject any entry whose normalized name leaves the staging root, points
+// at an absolute path, or is a Windows drive-rooted path. Defense against
+// maliciously crafted zips (zip slip). We keep this strict on purpose.
+function isUnsafeEntry(name) {
+  if (!name) return true;
+  if (name.startsWith('/') || /^[A-Za-z]:[\\/]/.test(name)) return true;
+  if (/(^|\/)\.\.(\/|$)/.test(name)) return true;
+  return false;
+}
+
+// Minimal PNG header reader. PNG IHDR lives at offset 16 (4 bytes width,
+// 4 bytes height, big-endian). Part of the PNG file format spec
+// (https://www.w3.org/TR/PNG/#11IHDR).
+function pngSize(bytes) {
+  if (!Buffer.isBuffer(bytes)) bytes = Buffer.from(bytes);
+  if (bytes.length < 24) throw new Error('PNG 太小');
+  if (bytes.readUInt32BE(0) !== 0x89504e47) throw new Error('不是 PNG');
+  const w = bytes.readUInt32BE(16);
+  const h = bytes.readUInt32BE(20);
+  if (!(w > 0) || !(h > 0) || w > 16384 || h > 16384) {
+    throw new Error('PNG 尺寸超出范围');
+  }
+  return { w, h };
+}
+
+// Take the first frame in a variant directory and return its dimensions.
+// PetRegistry requires defaultSize, so the `default` variant directory
+// must yield at least one parseable frame.
+function frameSizeFromDir(absDir) {
+  let entries;
+  try { entries = fs.readdirSync(absDir); }
+  catch { throw new Error(`无法读取目录 ${absDir}`); }
+  for (const name of entries) {
+    if (!FRAME_RE.test(name)) continue;
+    let buf;
+    try { buf = fs.readFileSync(path.join(absDir, name)); }
+    catch { continue; }
+    try { return pngSize(buf); }
+    catch { continue; }
+  }
+  return null;
+}
+
+// Strip the leading root prefix from an entry name so the rest of the
+// pipeline can see the variant directories at the top level. Strips
+// platform-specific separators and trailing slashes; returns null when
+// nothing is left.
+function stripRoot(entryName, rootPrefix) {
+  const normalized = entryName.replace(/\\/g, '/').replace(/\/+$/, '');
+  if (!rootPrefix) return normalized;
+  if (normalized === rootPrefix) return '';
+  if (normalized.startsWith(rootPrefix + '/')) {
+    return normalized.slice(rootPrefix.length + 1);
+  }
+  return null;
+}
+
+// Pick the zip's logical root directory. Strategy:
+//   1. Collect every directory entry whose name has at least one slash.
+//   2. Reduce to the *first* path segment that appears most often among
+//      them — this naturally surfaces `example/` from `example.zip` and
+//      ignores noise from a stray top-level file.
+//   3. If no directory entries exist (or no first-segment repeats),
+//      return '' meaning "use the zip root as-is".
+// Returns the prefix string ('' or 'example') — not the original entry.
+function pickRootPrefix(entries) {
+  const counts = new Map();
+  for (const e of entries) {
+    if (e.isDirectory) continue;
+    const norm = e.entryName.replace(/\\/g, '/');
+    if (isUnsafeEntry(norm)) continue;
+    const first = norm.split('/')[0];
+    if (!first || first === '.') continue;
+    counts.set(first, (counts.get(first) || 0) + 1);
+  }
+  if (counts.size === 0) return '';
+  // Find max-count prefix; ties broken by shortest name (so `example`
+  // wins over `example-extended-assets` when both appear once).
+  let best = '';
+  let bestCount = 0;
+  for (const [name, count] of counts) {
+    if (count > bestCount || (count === bestCount && best.length === 0)) {
+      best = name;
+      bestCount = count;
+    }
+  }
+  return best || '';
+}
+
+// Read every PNG (and compute its byte size) from the zip, grouped by the
+// resolved variant directory. Skips unsafe / non-PNG entries; enforces
+// caps. Returns { variants: { default: [{name, bytes}], … }, totalBytes,
+// rootPrefix }.
+function readPackFromZip(zipPath) {
+  const stat = fs.lstatSync(zipPath);
+  if (stat.isSymbolicLink()) throw new Error('不允许符号链接');
+  const zip = new AdmZip(zipPath);
+  const rawEntries = zip.getEntries();
+  if (rawEntries.length > MAX_ENTRIES) {
+    throw new Error(`桌宠包包含超过 ${MAX_ENTRIES} 个条目`);
+  }
+
+  const rootPrefix = pickRootPrefix(rawEntries);
+  const variants = { default: [], reminder: [], walkingRight: [], walkingLeft: [] };
+  let totalBytes = 0;
+
+  for (const e of rawEntries) {
+    if (e.isDirectory) continue;
+    const norm = e.entryName.replace(/\\/g, '/');
+    if (isUnsafeEntry(norm)) throw new Error(`非法路径条目：${e.entryName}`);
+    const stripped = stripRoot(norm, rootPrefix);
+    if (stripped === null) continue;          // outside root; ignore
+    if (!stripped) continue;                  // the root entry itself
+    const segs = stripped.split('/');
+    if (segs.length < 2) continue;            // not inside a variant dir
+    const dirName = segs[0];
+    const fileName = segs.slice(1).join('/');
+    if (segs.length !== 2) continue;          // don't allow extra nesting
+    const slot = VARIANT_DIRS[dirName];
+    if (!slot) continue;                      // unknown variant; skip
+    if (!/\.png$/i.test(fileName)) continue;  // only PNGs
+
+    const size = (e.header && e.header.size) || 0;
+    if (size > MAX_PNG_BYTES) {
+      throw new Error(`单帧 PNG 超过 ${Math.round(MAX_PNG_BYTES / 1024 / 1024)} MiB：${fileName}`);
+    }
+    totalBytes += size;
+    if (totalBytes > MAX_TOTAL_BYTES) {
+      throw new Error(`桌宠包总体积超过 ${Math.round(MAX_TOTAL_BYTES / 1024 / 1024)} MiB`);
+    }
+
+    const bytes = Buffer.from(e.getData());
+    if (bytes.length > MAX_PNG_BYTES) {
+      throw new Error(`解压后单帧超过 ${Math.round(MAX_PNG_BYTES / 1024 / 1024)} MiB：${fileName}`);
+    }
+
+    if (slot.key === 'walking' && slot.slot === 'right') variants.walkingRight.push({ name: fileName, bytes });
+    else if (slot.key === 'walking' && slot.slot === 'left') variants.walkingLeft.push({ name: fileName, bytes });
+    else if (slot.key === 'default') variants.default.push({ name: fileName, bytes });
+    else if (slot.key === 'reminder') variants.reminder.push({ name: fileName, bytes });
+  }
+
+  // `default` is the only hard requirement — the pet has nothing to
+  // stand still on without it. walking / reminder are optional; missing
+  // them just means the pet won't walk / nag.
+  if (variants.default.length === 0) {
+    throw new Error('桌宠包缺少 default/ 子目录（必填）');
+  }
+
+  // Read frame size from the first parseable frame in default/. PetRegistry
+  // uses defaultSize for window sizing, so we need at least one good frame.
+  // We pull the bytes we already have in memory rather than going back to
+  // disk.
+  let frameSize = null;
+  for (const f of variants.default) {
+    if (!FRAME_RE.test(f.name)) continue;
+    try { frameSize = pngSize(f.bytes); break; } catch {}
+  }
+  if (!frameSize) {
+    throw new Error('default/ 子目录下找不到合法 PNG 帧（命名应为 <name>_NNN_NNNN.png）');
+  }
+
+  return { variants, frameSize, rootPrefix };
+}
+
+// Stable id from the full zip bytes. Same content → same id → idempotent
+// re-import lands back on the existing directory instead of duplicating.
+function digestFromZip(zipPath) {
+  const bytes = fs.readFileSync(zipPath);
+  const hash = crypto.createHash('sha256').update(bytes).digest('hex');
+  return { id: `imported-${hash.slice(0, 16)}`, name: path.basename(zipPath, path.extname(zipPath)) };
+}
+
+// Move bytes out of an in-memory `[{name, bytes}]` list to disk under
+// `dir`. Filenames are kept verbatim — the renderer's frame regex already
+// depends on the exact `<name>_NNN_NNNN.png` shape.
+function writeVariant(dir, files) {
+  if (files.length === 0) return;
+  fs.mkdirSync(dir, { recursive: true });
+  for (const f of files) {
+    fs.writeFileSync(path.join(dir, f.name), f.bytes);
+  }
+}
+
+// Public entry point.
+//
+//   userDataPath — the user-data parent dir (`<appData>/MemoryPet`),
+//                  matching the convention in `main/ipc.js:getPetsUserDataPath()`.
+//                  The function itself appends `/pets/`.
+//
+// Returns: { ok:true, deduped:boolean, pet:{id,name}, rootDir }
+function installPetZip(zipPath, userDataPath) {
+  if (!zipPath) throw new Error('zip 路径为空');
+  if (!fs.existsSync(zipPath)) throw new Error('找不到桌宠压缩包');
+
+  const { variants, frameSize, rootPrefix } = readPackFromZip(zipPath);
+  const { id, name: zipBaseName } = digestFromZip(zipPath);
+
+  const petsRoot = path.join(userDataPath, 'pets');
+  fs.mkdirSync(petsRoot, { recursive: true });
+  const targetDir = path.join(petsRoot, id);
+
+  // Idempotent re-import: a directory with this id already exists with a
+  // manifest.json — treat as a dedup hit and return the existing pet.
+  if (fs.existsSync(targetDir) && fs.existsSync(path.join(targetDir, 'manifest.json'))) {
+    let existingName = zipBaseName;
+    try {
+      const m = JSON.parse(fs.readFileSync(path.join(targetDir, 'manifest.json'), 'utf8'));
+      if (m && typeof m.name === 'string' && m.name.trim()) existingName = m.name;
+    } catch {}
+    return { ok: true, deduped: true, pet: { id, name: existingName }, rootDir: targetDir };
+  }
+
+  // Resolve a display name up front: prefer the auto-detected root folder
+  // name (so `example.zip` → "example"); otherwise fall back to the zip's
+  // basename. Declared outside `try` because the success return below
+  // needs to read it.
+  const petName = (rootPrefix && /^[a-zA-Z0-9_.\- ]{1,80}$/.test(rootPrefix))
+    ? rootPrefix
+    : zipBaseName;
+
+  // Staging dir under a hidden prefix; renamed atomically on success so a
+  // mid-write crash can't leave a half-installed pack visible to the
+  // registry rescan.
+  const staging = fs.mkdtempSync(path.join(petsRoot, '.import-'));
+  try {
+    // Always write `default/` — it's the only required variant.
+    writeVariant(path.join(staging, 'default'), variants.default);
+
+    // Mirror the on-disk shape of `resources/pets/default/`. Note that
+    // `walking` requires both directions to be listed; if only one was
+    // present in the zip, the controller will pick the same root for
+    // both directions (PetRegistry.pickRandom still varies the leaf).
+    const hasWalkingR = variants.walkingRight.length > 0;
+    const hasWalkingL = variants.walkingLeft.length > 0;
+    const walkingRoots = [];
+    if (hasWalkingR || hasWalkingL) {
+      if (hasWalkingR) {
+        writeVariant(path.join(staging, 'walking.right'), variants.walkingRight);
+        walkingRoots.push('walking.right');
+      }
+      if (hasWalkingL) {
+        writeVariant(path.join(staging, 'walking.left'), variants.walkingLeft);
+        walkingRoots.push('walking.left');
+      }
+    }
+
+    const variantDefs = {};
+    variantDefs.default = { roots: ['default'], loop: true };
+    if (variants.reminder.length > 0) {
+      writeVariant(path.join(staging, 'reminder'), variants.reminder);
+      variantDefs.reminder = { roots: ['reminder'], loop: true };
+    }
+    if (walkingRoots.length > 0) {
+      variantDefs.walking = { roots: walkingRoots, loop: true, needsDirection: walkingRoots.length > 1 };
+    }
+
+    const manifest = {
+      id,
+      name: petName,
+      description: '',
+      defaultSize: { w: frameSize.w, h: frameSize.h },
+      frameRegex: FRAME_REGEX_SRC,
+      variants: variantDefs,
+      source: 'imported',
+      origin: 'zip',
+      importedAt: new Date().toISOString(),
+    };
+
+    fs.writeFileSync(
+      path.join(staging, 'manifest.json'),
+      JSON.stringify(manifest, null, 2),
+      'utf8',
+    );
+
+    // Atomic publish.
+    fs.renameSync(staging, targetDir);
+  } catch (err) {
+    try { fs.rmSync(staging, { recursive: true, force: true }); } catch {}
+    throw err;
+  }
+
+  return { ok: true, deduped: false, pet: { id, name: petName }, rootDir: targetDir };
+}
+
+// Convenience: drop an imported pet directory. Caller must verify the id
+// starts with `imported-` before calling.
+function removeImported(petId, userDataPath) {
+  const dir = path.join(userDataPath, 'pets', petId);
+  if (!fs.existsSync(dir)) throw new Error('桌宠不存在');
+  fs.rmSync(dir, { recursive: true, force: true });
+  return { removed: true, rootDir: dir };
+}
+
+module.exports = {
+  installPetZip,
+  removeImported,
+  // exported for tests / future callers
+  _internal: { pickRootPrefix, pngSize, frameSizeFromDir, VARIANT_DIRS },
+};

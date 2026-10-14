@@ -88,14 +88,13 @@ export const api = {
       M.pet.resolveFrames?.(petId, variant, direction),
     getWalkEnabled: () => M.pet.getWalkEnabled(),
     setWalkEnabled: (b) => M.pet.setWalkEnabled(b),
-    // Pack import (desktop-pet style adapter). listInstalled returns
-    // registry entries decorated with `source: 'builtIn' | 'imported'`,
-    // `origin`, `importedAt`, and `description` so the /pets page can
-    // render a unified list. importFromFolder / importFromZip both pop
-    // a native picker and resolve to { canceled } or
+    // Pack import (frame-directory zip — see main/pet_zip_import.js).
+    // listInstalled returns registry entries decorated with
+    // `source: 'builtIn' | 'imported'`, `origin`, `importedAt`, and
+    // `description` so the settings page can render a unified list.
+    // importFromZip pops a native picker and resolves to { canceled } or
     // { ok, deduped, pet: { id, name } }.
     listInstalled:   ()      => M.pet.listInstalled?.() || Promise.resolve([]),
-    importFromFolder:()      => M.pet.importFromFolder?.(),
     importFromZip:   ()      => M.pet.importFromZip?.(),
     removeImported:  (petId) => M.pet.removeImported?.(petId),
   },

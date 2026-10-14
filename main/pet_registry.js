@@ -218,10 +218,17 @@ class PetRegistry {
    */
   rescan() {
     if (!this._userPetsDir) return this._pets.size;
+    // Each imported pet lives at <userPetsDir>/<id>, not at <userPetsDir>
+    // itself — so equality won't match. Use a path-prefix comparison: any
+    // entry rooted inside the user-data pets dir is user-installed and
+    // should be wiped before the rescan rebuilds the catalog.
+    const ud = this._userPetsDir;
     for (const [id, entry] of this._pets.entries()) {
-      if (entry.rootDir === this._userPetsDir) this._pets.delete(id);
+      if (entry.rootDir === ud || entry.rootDir.startsWith(ud + path.sep)) {
+        this._pets.delete(id);
+      }
     }
-    this._scanOne(this._userPetsDir);
+    this._scanOne(ud);
     return this._pets.size;
   }
 }
