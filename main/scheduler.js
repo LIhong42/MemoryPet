@@ -1,5 +1,15 @@
-// main/scheduler.js — periodic scan, fires due reminders, drives pet state
+// main/scheduler.js — periodic scan, fires due reminders, drives pet state.
+//
+// Also owns the 1s "bond pipeline" tick that:
+//   * advances cozy decay
+//   * computes PetMood
+//   * fires autonomous pet behaviors (clingy_walk, weekend_greet, …)
+//   * settles missed weeks
+//   * broadcasts mood changes to both windows
 const db = require('./db');
+const petInteractions = require('./pet_interactions');
+const petMood = require('./pet_mood');
+const autoBehaviors = require('./auto_behaviors');
 const { computeNextFireEvent, computeNextFireImportantDate, parseDateTime } = require('./time_util');
 
 const TICK_MS = 20_000;
@@ -225,4 +235,90 @@ function scanAndFire({ queue, getPetState, setPetState, setActiveReminder, petCo
   }
 }
 
-module.exports = { start, stop, ReminderQueue };
+module.exports = { start, stop, ReminderQueue, startBondPipeline, stopBondPipeline };
+
+// ---- Bond pipeline (1s tick) ----
+// Started by main.js after the windows + petController are ready. Stops
+// independently of the 20s reminder scan so the two timers never block
+// each other.
+let moodTimer = null;
+let lastMoodEmitted = null;
+
+function startBondPipeline({ petController, winPet, winMain }) {
+  if (moodTimer) return;
+  moodTimer = setInterval(() => {
+    try {
+      const petId = db.getSetting('pet_id') || (petController && petController.petId);
+      if (!petId) return;
+      // 1) advance cozy decay (idempotent)
+      petInteractions.getCozySnapshot(db, petId);  // ensures row + rollDay
+      // Decay is applied by an explicit tick function in cozy_engine — we
+      // just call into it through the interactions wrapper. To keep pet
+      // decoupled from the engine module path here, we manually import
+      // cozy_engine and run the tick.
+      const cozyEngine = require('./cozy_engine');
+      cozyEngine.applyDecayTick(db, petId, db.nowStr.bind(db));
+
+      // 2) snapshot bond + cozy
+      const bondSnap = petInteractions.getBondSnapshot(db, petId);
+      const cozySnap = petInteractions.getCozySnapshot(db, petId);
+
+      // 3) sync tier onto the controller
+      if (petController && typeof petController.setBondTier === 'function') {
+        petController.setBondTier(bondSnap.tier);
+      }
+
+      // 4) compute mood
+      const now = new Date();
+      const activeReminders = (typeof queue !== 'undefined' && queue && queue.activeCount)
+        ? queue.activeCount()
+        : (petController && petController._reminderOn ? 1 : 0);
+      const mood = petInteractions.computeMood(
+        db,
+        petMood.computeMood,
+        activeReminders,
+        petId,
+      );
+
+      // 5) auto behaviors
+      const auto = autoBehaviors.evaluate(db, petId, {
+        tier: bondSnap.tier,
+        cozy: cozySnap.value,
+        dow: now.getDay(),
+        hour: now.getHours(),
+      });
+      if (auto && petController && petController.triggerOneShot) {
+        petController.triggerOneShot(auto.variant, auto.oneShotMs);
+        autoBehaviors.markTriggered(db, petId, auto.name, Date.now());
+      }
+
+      // 6) broadcast if mood changed
+      if (mood.mood !== lastMoodEmitted) {
+        const payload = Object.assign({}, mood, {
+          bond_tier: bondSnap.tier,
+          bond_value: bondSnap.value,
+          tier_label: bondSnap.tier_label,
+          week_score: bondSnap.weekly_score,
+          next_tier: bondSnap.next_tier,
+          cozy: cozySnap.value,
+          cozy_today_peak: cozySnap.today_peak,
+          cozy_today_interactions: cozySnap.today_interactions,
+          lonely_hours: Math.round((cozySnap.lonely_hours | 0) * 10) / 10,
+        });
+        if (winPet && !winPet.isDestroyed()) winPet.webContents.send('pet:mood-changed', payload);
+        if (winMain && !winMain.isDestroyed()) winMain.webContents.send('pet:mood-changed', payload);
+        lastMoodEmitted = mood.mood;
+      }
+
+      // 7) weekly settlement check
+      petInteractions.runWeeklySettlementIfDue(db, db.nowStr.bind(db), petId);
+    } catch (e) {
+      console.error('[bond pipeline]', e && e.message ? e.message : e);
+    }
+  }, 1000);
+}
+
+function stopBondPipeline() {
+  if (moodTimer) { clearInterval(moodTimer); moodTimer = null; }
+  lastMoodEmitted = null;
+}

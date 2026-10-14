@@ -172,11 +172,22 @@ class PetRegistry {
    * @param {'left'|'right'} [opts.direction]
    * @returns {{frames: Array<{url, ms}>, loop: boolean, variantHint: string, size: {w,h}}}
    */
-  resolveFrames({ petId, variant, direction }) {
+  resolveFrames({ petId, variant, direction, bondTier }) {
     const entry = this._pets.get(petId);
     if (!entry) throw new Error(`unknown pet: ${petId}`);
     const { manifest, rootDir } = entry;
-    const v = manifest.variants && manifest.variants[variant];
+    let v = manifest.variants && manifest.variants[variant];
+    // Tier gating: if the requested variant declares `requiresTier` and the
+    // caller's bondTier is below that bar, fall back to `default` so the
+    // pet keeps drawing something rather than going blank. The renderer
+    // can still distinguish the requested variant via CSS filter
+    // (`data-mood`) so the user's "pat" intent isn't lost visually.
+    let tierForced = false;
+    const tier = (bondTier | 0) || 1;
+    if (v && v.requiresTier && tier < v.requiresTier) {
+      v = manifest.variants && manifest.variants.default;
+      tierForced = true;
+    }
     if (!v || !Array.isArray(v.roots) || v.roots.length === 0) {
       throw new Error(`pet '${petId}' has no variant '${variant}'`);
     }
@@ -205,6 +216,24 @@ class PetRegistry {
       loop: v.loop !== false,           // default true
       variantHint: path.relative(rootDir, leaf).replace(/\\/g, '/'),
       size: manifest.defaultSize,
+      // When `tierForced` is true, the renderer should still set
+      // `data-action="pat"` etc. so the CSS filter carries the visual
+      // difference; only `frames` are from the default leaf.
+      tierForced,
+    };
+  }
+
+  // Returns variant metadata (roots, loop, requiresTier) so callers
+  // (renderer / Mood) can introspect before requesting frames.
+  getVariantMeta(petId, variant) {
+    const entry = this._pets.get(petId);
+    if (!entry) return null;
+    const v = entry.manifest.variants && entry.manifest.variants[variant];
+    if (!v) return null;
+    return {
+      requiresTier: (v.requiresTier | 0) || 1,
+      loop: v.loop !== false,
+      hasRoots: Array.isArray(v.roots) && v.roots.length > 0,
     };
   }
 

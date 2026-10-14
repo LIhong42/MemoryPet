@@ -142,6 +142,66 @@ CREATE TABLE IF NOT EXISTS memorial_event_photos (
   created_at        TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_mep_event ON memorial_event_photos(memorial_event_id);
+
+-- Bond / Cozy / WeeklyRitual tables (Ritual-Bond pet intimacy system).
+--   bond_strength : persistent pet affinity per pet_id, with tier (1..7).
+--   weekly_ritual : per-pet weekly tracker across 10 dimensions; the row key
+--                    is (pet_id, week_start) where week_start is the Monday
+--                    (YYYY-MM-DD) the row was opened. Older rows stay around
+--                    for weekly trend reporting but only the current row is
+--                    consulted by pet_mood + bond_engine.
+--   cozy_state    : per-pet "is the user playing with me" 0..100, decays
+--                    over time of inactivity, refills via pet/pat/feed/etc.
+--                    'today_*' columns are reset at midnight local time.
+--   play_log      : append-only log of every cozy interaction for stats and
+--                    for last_play_at lookups (cheaper than scanning).
+CREATE TABLE IF NOT EXISTS bond_strength (
+  pet_id          TEXT PRIMARY KEY,
+  value           INTEGER NOT NULL DEFAULT 0,
+  tier            INTEGER NOT NULL DEFAULT 1,
+  streak_weeks    INTEGER NOT NULL DEFAULT 0,
+  last_week_settled TEXT,
+  updated_at      TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS weekly_ritual (
+  pet_id              TEXT NOT NULL,
+  week_start          TEXT NOT NULL,                    -- YYYY-MM-DD (Monday)
+  contact_reviewed    INTEGER NOT NULL DEFAULT 0,
+  contact_added       INTEGER NOT NULL DEFAULT 0,
+  contact_modified    INTEGER NOT NULL DEFAULT 0,
+  event_created       INTEGER NOT NULL DEFAULT 0,
+  important_date_added INTEGER NOT NULL DEFAULT 0,
+  avatar_uploaded     INTEGER NOT NULL DEFAULT 0,
+  attribute_changed   INTEGER NOT NULL DEFAULT 0,
+  memorial_recorded   INTEGER NOT NULL DEFAULT 0,
+  reminder_completed  INTEGER NOT NULL DEFAULT 0,
+  reminder_snoozed    INTEGER NOT NULL DEFAULT 0,
+  reviewed_contacts   TEXT NOT NULL DEFAULT '[]',      -- JSON array of contact_ids
+  last_touched_at     TEXT,
+  PRIMARY KEY (pet_id, week_start)
+);
+
+CREATE TABLE IF NOT EXISTS cozy_state (
+  pet_id              TEXT PRIMARY KEY,
+  value               INTEGER NOT NULL DEFAULT 40,
+  last_play_at        INTEGER NOT NULL DEFAULT 0,      -- epoch ms; 0 means never
+  last_decay_at       INTEGER NOT NULL DEFAULT 0,      -- epoch ms of last decay tick
+  today_day           TEXT NOT NULL DEFAULT '',        -- YYYY-MM-DD
+  today_peak          INTEGER NOT NULL DEFAULT 40,
+  today_interactions  TEXT NOT NULL DEFAULT '{}',      -- JSON: {pet:6,feed:1,...}
+  updated_at          TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS play_log (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  pet_id      TEXT NOT NULL,
+  ts          INTEGER NOT NULL,                          -- epoch ms
+  action      TEXT NOT NULL,                             -- pet|pat|feed|play|sleep|cuddle
+  cozy_delta  INTEGER NOT NULL,
+  silent      INTEGER NOT NULL DEFAULT 0                 -- 1 if cooldown silently dropped
+);
+CREATE INDEX IF NOT EXISTS idx_play_log_pet_ts ON play_log(pet_id, ts);
 `;
 
 let db = null;
@@ -193,6 +253,7 @@ async function open(dbPathArg) {
   migrateMemorialEventsV2();
   seedDefaultFestivals();
   migratePinV1();
+  migrateBondV1();
 
   // Settings defaults
   const s = db.prepare('SELECT value FROM settings WHERE key = ?');
@@ -1232,6 +1293,73 @@ function migratePinV1() {
     setSetting('app_pin_hash', hashPin('8888'));
   } catch (e) {
     console.error('migratePinV1 failed:', e);
+  }
+}
+
+// ---- Bond / Cozy v1 migration ----
+// Idempotent. The CREATE TABLE statements above already get us the tables
+// on fresh installs, so this migration is mostly a guard: any historical
+// `weekly_ritual` row from a previous schema (which had no
+// `reviewed_contacts` JSON column or today's column-count change) is
+// rebuilt on first read by `migrateContactReviewedIdsV1` if it would error.
+// On first boot after this commit we also seed one bond_strength row per
+// pet so the renderer can read `value/tier` immediately.
+const BOND_V1_KEY = 'bond_v1_applied';
+function migrateBondV1() {
+  if (!db) return;
+  if (getSetting(BOND_V1_KEY) === '1') return;
+  try {
+    // Defensive: re-run the CREATE statements so an upgrade from a
+    // pre-Bond schema still gets tables even if SCHEMA didn't fire for
+    // some reason (e.g. partial migration).
+    db.run(`CREATE TABLE IF NOT EXISTS bond_strength (
+      pet_id TEXT PRIMARY KEY,
+      value INTEGER NOT NULL DEFAULT 0,
+      tier INTEGER NOT NULL DEFAULT 1,
+      streak_weeks INTEGER NOT NULL DEFAULT 0,
+      last_week_settled TEXT,
+      updated_at TEXT NOT NULL
+    )`);
+    db.run(`CREATE TABLE IF NOT EXISTS weekly_ritual (
+      pet_id TEXT NOT NULL,
+      week_start TEXT NOT NULL,
+      contact_reviewed INTEGER NOT NULL DEFAULT 0,
+      contact_added INTEGER NOT NULL DEFAULT 0,
+      contact_modified INTEGER NOT NULL DEFAULT 0,
+      event_created INTEGER NOT NULL DEFAULT 0,
+      important_date_added INTEGER NOT NULL DEFAULT 0,
+      avatar_uploaded INTEGER NOT NULL DEFAULT 0,
+      attribute_changed INTEGER NOT NULL DEFAULT 0,
+      memorial_recorded INTEGER NOT NULL DEFAULT 0,
+      reminder_completed INTEGER NOT NULL DEFAULT 0,
+      reminder_snoozed INTEGER NOT NULL DEFAULT 0,
+      reviewed_contacts TEXT NOT NULL DEFAULT '[]',
+      last_touched_at TEXT,
+      PRIMARY KEY (pet_id, week_start)
+    )`);
+    db.run(`CREATE TABLE IF NOT EXISTS cozy_state (
+      pet_id TEXT PRIMARY KEY,
+      value INTEGER NOT NULL DEFAULT 40,
+      last_play_at INTEGER NOT NULL DEFAULT 0,
+      last_decay_at INTEGER NOT NULL DEFAULT 0,
+      today_day TEXT NOT NULL DEFAULT '',
+      today_peak INTEGER NOT NULL DEFAULT 40,
+      today_interactions TEXT NOT NULL DEFAULT '{}',
+      updated_at TEXT NOT NULL
+    )`);
+    db.run(`CREATE TABLE IF NOT EXISTS play_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      pet_id TEXT NOT NULL,
+      ts INTEGER NOT NULL,
+      action TEXT NOT NULL,
+      cozy_delta INTEGER NOT NULL,
+      silent INTEGER NOT NULL DEFAULT 0
+    )`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_play_log_pet_ts ON play_log(pet_id, ts)`);
+    setSetting(BOND_V1_KEY, '1');
+    markDirty();
+  } catch (e) {
+    console.error('migrateBondV1 failed:', e);
   }
 }
 

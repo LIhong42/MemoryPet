@@ -11,6 +11,7 @@
 - **提醒调度**：20 秒一轮扫描，NORMAL ↔ REMINDER 状态机
 - **全局搜索**：跨联系人/事件/重要日期的 LIKE 搜索
 - **本地 SQLite** 存储（通过 `sql.js` WASM），完全离线
+- **访问密码门禁**：4 位数字 PIN（默认见首次启动后设置页提示；可在「设置 → 访问密码」修改）。右键桌宠 → "打开主窗口" 触发，scrypt 加盐 hash 存储，**每次显示主窗口都需重新输入**
 
 ## 技术栈
 
@@ -26,6 +27,7 @@ MemoryPet/
 ├── main/                  # Electron 主进程
 │   ├── main.js            # 入口（窗口创建 + 调度器启动）
 │   ├── db.js              # sql.js 封装（迁移 + 持久化）
+│   ├── auth.js            # scrypt PIN 散列 / 校验
 │   ├── time_util.js       # 下次触发时间计算（纯函数）
 │   ├── scheduler.js       # 20 秒轮询提醒
 │   ├── ipc.js             # 所有 ipcMain.handle 通道
@@ -36,6 +38,7 @@ MemoryPet/
 │   ├── css/styles.css / pet.css
 │   ├── js/
 │   │   ├── api.js         # mp.* IPC 封装
+│   │   ├── auth.js        # 主窗口 PIN 锁流程（body.locked）
 │   │   ├── router.js      # hash 路由
 │   │   ├── main.js        # 主窗口入口
 │   │   ├── pet.js         # 宠物窗口逻辑
@@ -86,13 +89,17 @@ npm run build
 ## 调试提醒流程
 
 1. 启动后桌宠在 NORMAL 状态（bob 动画）。
-2. 设置页 → 调试区 → "让所有提醒立即到期" → 20 秒内桌宠进入 REMINDER（shake 动画 + 角标）。
-3. 点击桌宠 → 主窗口弹出提醒模态框 → 完成 → 桌宠回 NORMAL。
+2. 右键桌宠 → "打开主窗口" → 在 PIN 模态框中输入访问密码 → 主窗口解锁。
+3. 设置页 → 调试区 → "让所有提醒立即到期" → 20 秒内桌宠进入 REMINDER（shake 动画 + 角标）。
+4. 右键桌宠 → "打开主窗口" → 解锁后提醒模态框自动弹出 → 完成 → 桌宠回 NORMAL。
+
+> 注意：单击桌宠**不再**打开主窗口；必须通过右键菜单。单击只会清掉提醒泡并短暂暂停桌宠移动。
 
 ## 数据存储位置
 
 - DB：`%APPDATA%/MemoryPet/memorypet.db`（sql.js 内存库 + 周期性写盘）
 - 桌宠位置：`settings.pet_x` / `settings.pet_y`（默认 200, 200）
+- 访问密码：`settings.app_pin_hash`（scrypt 16B 盐 + 32B 散列，hex 拼接 `<salt>$<hash>`）
 
 ## 关键设计决策
 
@@ -101,6 +108,7 @@ npm run build
 - **scheduler 20 秒轮询**：分钟级响应，不需要更精细。
 - **不实现 FTS5**：sql.js 的 FTS5 启用复杂，回退到 LIKE 搜索（小数据集够用）。
 - **不打包 Live2D**：用 inline SVG 猫精灵 + CSS 动画（`@keyframes bob/shake`）。
+- **访问密码门禁**：渲染端在 `body.locked` 下隐藏 `#app` 与 `.topbar`；所有"显示主窗口"的路径（dev 自动 show、右键 `打开主窗口`、`main:open-reminder` IPC）都会触发 `visibilitychange` → `pageshow` 重新加锁。每次显示都重新校验，而不是进程内解锁一次。散列/校验放在主进程（`main/auth.js`），渲染端只看到 `{ ok: boolean }`，拿不到 salt。scrypt 参数 `N=16384, r=8, p=1, maxmem=64MB`，单次派生约 25-40 ms；4 位数字的密钥空间本就只够挡住随意翻 DB 的窥视，暴力枚举场景下不增加真实安全性。
 
 ## 已知问题 / 环境约束
 

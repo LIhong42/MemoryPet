@@ -36,12 +36,16 @@ function petRenderSize(defaultSize) {
   return { w: wPx, h: PET_RENDER_HEIGHT };
 }
 
-// UI-level variants the controller emits. Only the two folders shipped with
-// the vup resource set ("Default" + "MOVE") plus the reminder override are
-// reachable. The renderer turns these into a manifest `variants` lookup; the
-// registry picks the actual frame leaf.
+// UI-level variants the controller emits. The vup resource set shipped
+// ("Default" + "MOVE") provides only `default` / `walking` / `reminder`; the
+// remaining keys (pat, greet, play, sleep, cuddle) are accepted here so
+// manifest authors can declare them and ship resources later. Today the
+// renderer turns these into a manifest `variants` lookup; if the manifest
+// doesn't have the requested variant, the registry falls back to `default`
+// and the CSS filter (driven by `data-mood`) carries the visual difference.
 const VALID_VARIANTS = new Set([
   'default', 'walking', 'reminder',
+  'pat', 'greet', 'play', 'sleep', 'cuddle',
 ]);
 
 class PetController {
@@ -67,6 +71,9 @@ class PetController {
       db.setSetting('pet_id', this.petId);
     }
     this._reminderOn = false;
+    // Bond tier 1..7, synced from main bond_engine on each scheduler tick.
+    // Used to gate one-shot variants that require a higher tier.
+    this.bondTier = 1;
     // Window/CSS render size for the current pet. Recomputed on setPetId()
     // and used by _bounds() / _stepWalk() so the auto-walk clamp follows
     // the window when its width changes.
@@ -99,6 +106,14 @@ class PetController {
     }
   }
 
+  // Bound from main/scheduler.js 1s tick — keeps `this.bondTier` in sync so
+  // triggerOneShot can refuse tier-gated variants without an extra DB read.
+  setBondTier(tier) {
+    const t = Math.max(1, Math.min(7, (tier | 0) || 1));
+    if (this.bondTier === t) return;
+    this.bondTier = t;
+  }
+
   setPetId(id) {
     if (!this.petRegistry) return;
     const known = this.petRegistry.list().map((p) => p.id);
@@ -127,9 +142,13 @@ class PetController {
 
   // One-shot: renderer can ask the controller to fire a one-shot variant for
   // `ms` milliseconds, after which the underlying state resumes. Used for
-  // click-triggered `reminder`, etc.
-  triggerOneShot(variant, ms) {
+  // click-triggered `reminder`, etc. `opts.minTier` lets callers gate the
+  // request behind the bond tier — useful for `pat` (tier>=5) or
+  // `cuddle` (tier>=6) when you don't want IPC round-trips.
+  triggerOneShot(variant, ms, opts) {
     if (!VALID_VARIANTS.has(variant)) return;
+    const minTier = (opts && opts.minTier) | 0 || 0;
+    if (minTier > 0 && this.bondTier < minTier) return;
     if (this.win && !this.win.isDestroyed()) {
       this.win.webContents.send('pet:action-changed', {
         petId: this.petId,

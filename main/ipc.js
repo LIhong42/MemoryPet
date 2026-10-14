@@ -15,6 +15,10 @@ const albumPdf = require('./album_pdf');
 const PDFDocument = require('pdfkit');
 const albumVideo = require('./album_video');
 const { verifyPin, hashPin, isValidPinShape } = require('./auth');
+const petInteractions = require('./pet_interactions');
+const bondEngine = require('./bond_engine');
+const cozyEngine = require('./cozy_engine');
+const petMoodMod = require('./pet_mood');
 
 // Tracks in-flight export jobs so the renderer can cancel them via
 // `export:cancel`. The value is a mutable record: { killed, outPath? }.
@@ -37,6 +41,30 @@ function resolveName(input) {
 }
 
 function register({ queue, winMain, winPet, setPetState, getPetState, setActiveReminder, petController, petRegistry }) {
+  // ---- Bond / Cozy / Mood glue ----
+  // One-line helper called from existing CRUD handlers so we never forget
+  // a dimension. Errors are swallowed because bond tracking is best-effort
+  // and must never block user data writes.
+  const trackActivity = (kind) => {
+    try { petInteractions.trackActivity(db, kind, db.nowStr.bind(db)); } catch {}
+  };
+
+  // Trigger a one-shot variant on the pet window if the controller exists
+  // and the variant is in the current pet's whitelist. minTier gates the
+  // request early so the renderer doesn't need to know bond state.
+  const fireVariant = (variant, ms, opts) => {
+    if (!petController || !petController.triggerOneShot) return;
+    petController.triggerOneShot(variant, ms, opts);
+  };
+
+  // Send a one-shot particle to the pet window. char is the emoji/glyph;
+  // optional `x/y` lets the renderer anchor it (defaults to center).
+  const sendParticle = (char, opts) => {
+    if (!winPet || winPet.isDestroyed()) return;
+    winPet.webContents.send('pet:particle', Object.assign({ char }, opts || {}));
+  };
+
+  // ---- Contacts ----
   // ---- Contacts ----
   ipcMain.handle('contacts:list', () =>
     db.all('SELECT * FROM contacts WHERE listed = 1 ORDER BY updated_at DESC').map(db.parseContactRow));
@@ -71,6 +99,7 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
     const stored = db.one('SELECT * FROM contacts WHERE id = ?', [id]);
     const parsed = db.parseContactRow(stored);
     db.upsertSearch('contact', id, db.buildContactBody(parsed));
+    trackActivity('contact_added');
     return parsed;
   });
 
@@ -90,6 +119,7 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
     const stored = db.one('SELECT * FROM contacts WHERE id = ?', [id]);
     const parsed = db.parseContactRow(stored);
     db.upsertSearch('contact', id, db.buildContactBody(parsed));
+    trackActivity('contact_modified');
     return parsed;
   });
 
@@ -202,6 +232,7 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
     );
     const stored = db.parseContactRow(db.one('SELECT * FROM contacts WHERE id = ?', [contactId]));
     db.upsertSearch('contact', stored.id, db.buildContactBody(stored));
+    trackActivity('avatar_uploaded');
     return stored;
   });
 
@@ -273,6 +304,7 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
     // Sync search_index so the new description is searchable via LIKE.
     const c = db.parseContactRow(db.one('SELECT * FROM contacts WHERE id = ?', [input.contact_id]));
     if (c) db.upsertSearch('contact', c.id, db.buildContactBody(c));
+    trackActivity('attribute_changed');
     return db.one(
       `SELECT a.*, c.name AS contact_name
          FROM contact_attributes a JOIN contacts c ON c.id = a.contact_id
@@ -295,6 +327,7 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
       const c = db.parseContactRow(db.one('SELECT * FROM contacts WHERE id = ?', [row.contact_id]));
       if (c) db.upsertSearch('contact', c.id, db.buildContactBody(c));
     }
+    trackActivity('attribute_changed');
     return db.one(
       `SELECT a.*, c.name AS contact_name
          FROM contact_attributes a JOIN contacts c ON c.id = a.contact_id
@@ -396,6 +429,7 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
        input.remind_time || '09:00', now, now]
     );
     db.upsertSearch('important_date', id, `${input.label} ${input.kind || ''}`);
+    trackActivity('important_date_added');
     return db.one('SELECT * FROM important_dates WHERE id = ?', [id]);
   });
 
@@ -559,6 +593,7 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
        category, tagKind, lunarMonth, lunarDay, now, now]
     );
     db.upsertSearch('event', id, `${title} ${input.description || ''} ${input.remind_kind || ''} ${category} ${tagKind || ''}`);
+    trackActivity('event_created');
     return db.one('SELECT * FROM events WHERE id = ?', [id]);
   });
 
@@ -733,6 +768,7 @@ function normFreeText(s) {
     db.upsertSearch('memorial_event', id,
       [title, place, food, outfit, activities, notes, kind, occurredAt]
         .filter(Boolean).join(' '));
+    trackActivity('memorial_recorded');
     return db.getMemorialEvent(id);
   });
 
@@ -776,6 +812,7 @@ function normFreeText(s) {
     db.upsertSearch('memorial_event', id,
       [title, place, food, outfit, activities, notes, kind, occurredAt]
         .filter(Boolean).join(' '));
+    trackActivity('memorial_recorded');
     return db.getMemorialEvent(id);
   });
 
@@ -842,6 +879,7 @@ function normFreeText(s) {
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [id, eventId, relPath, input.filename || filename, input.mime || null, buf.length, now]
     );
+    trackActivity('memorial_recorded');
     return db.one(
       `SELECT id, relative_path, original_name, mime, size_bytes, created_at
          FROM memorial_event_photos WHERE id = ?`,
@@ -1106,6 +1144,7 @@ function normFreeText(s) {
       [source, sourceId, db.nowStr()]
     );
     updatePetState({ queue, setPetState, setActiveReminder });
+    trackActivity('reminder_completed');
     return true;
   });
 
@@ -1121,6 +1160,7 @@ function normFreeText(s) {
       [source, sourceId, db.nowStr()]
     );
     updatePetState({ queue, setPetState, setActiveReminder });
+    trackActivity('reminder_completed');
     return true;
   });
 
@@ -1138,6 +1178,7 @@ function normFreeText(s) {
     }
     queue.remove(source, sourceId);
     updatePetState({ queue, setPetState, setActiveReminder });
+    trackActivity('reminder_snoozed');
     return true;
   });
 
@@ -1479,8 +1520,96 @@ function normFreeText(s) {
   // itself; the renderer hook in src/js/auth.js handles reminder replay
   // after unlock.
   ipcMain.handle('pet:context_menu', () => {
+    // Snapshot current bond tier so each menu item can be enabled/disabled
+    // consistently without re-reading the DB during click handling. Tier
+    // gates match cozy_engine.COZY_DELTAS and bond_engine thresholds.
+    let bondTier = 1;
+    try { bondTier = bondEngine.getBondSnapshot(db).tier | 0 || 1; }
+    catch (e) { /* leave default 1 */ }
+    const muted = db.getSetting('pet_muted') === '1';
+    // fireBondAction wraps the IPC calls into a single helper so we can
+    // route a click through to the pet renderer (which doubles as the
+    // visual feedback layer for the cozy interaction).
+    const fireBondAction = (action) => {
+      try { petInteractions.applyCozyInteraction(db, action, { bondTier }, db.nowStr.bind(db)); } catch {}
+      // Tell the pet window to play the variant + optional particle. We
+      // intentionally do this here (main process) rather than in the
+      // renderer so the menu works even if the pet window is unfocused.
+      const map = {
+        pet: { variant: 'default', ms: 1200, particle: '💗' },
+        pat: { variant: 'pat', ms: 1800, particle: '✨', minTier: 5 },
+        feed: { variant: 'default', ms: 1500, particle: '🍖' },
+        play: { variant: 'play', ms: 2000, particle: '🧶', minTier: 3 },
+        sleep: { variant: 'sleep', ms: 2200, particle: '💤', minTier: 2 },
+        cuddle: { variant: 'cuddle', ms: 2500, particle: '💞', minTier: 6 },
+      };
+      const m = map[action];
+      if (m) {
+        fireVariant(m.variant, m.ms, { minTier: m.minTier || 0 });
+        if (m.particle) sendParticle(m.particle);
+      }
+    };
     const menu = Menu.buildFromTemplate([
       { label: '🐾 MemoryPet', enabled: false },
+      { type: 'separator' },
+      {
+        label: '🥰 摸一下',
+        click: () => fireBondAction('pet'),
+      },
+      {
+        label: '🐾 双击拍头 (tier≥5)',
+        enabled: bondTier >= 5,
+        click: () => fireBondAction('pat'),
+      },
+      { type: 'separator' },
+      {
+        label: '🍖 喂食',
+        click: () => fireBondAction('feed'),
+      },
+      {
+        label: '🧶 玩耍 (tier≥3)',
+        enabled: bondTier >= 3,
+        click: () => fireBondAction('play'),
+      },
+      {
+        label: '💤 睡觉 (tier≥2)',
+        enabled: bondTier >= 2,
+        click: () => fireBondAction('sleep'),
+      },
+      { type: 'separator' },
+      {
+        label: '✨ 庆祝',
+        click: () => {
+          try { petInteractions.celebrate(db); } catch {}
+          // Set a temporary flag so the next mood tick goes "proud".
+          try { db.setSetting(`today_event:${db.getSetting('pet_id') || 'vup'}`, '1'); } catch {}
+          fireVariant('default', 4000);
+          sendParticle('🎉');
+        },
+      },
+      {
+        label: bondTier >= 7 ? '🏆 传说之舞' : '🔒 传说之舞 (tier7 解锁)',
+        enabled: bondTier >= 7,
+        click: () => {
+          fireVariant('default', 5000);
+          sendParticle('🌟');
+        },
+      },
+      { type: 'separator' },
+      {
+        label: '📋 查看羁绊',
+        click: () => {
+          if (winMain && !winMain.isDestroyed()) {
+            winMain.show();
+            winMain.webContents.send('main:navigate', '/pets');
+          }
+        },
+      },
+      { type: 'separator' },
+      {
+        label: muted ? '🔈 取消静音' : '🔇 静音',
+        click: () => { db.setSetting('pet_muted', muted ? '0' : '1'); },
+      },
       { type: 'separator' },
       {
         label: '打开主窗口',
@@ -1500,6 +1629,92 @@ function normFreeText(s) {
       },
     ]);
     menu.popup({ window: winPet });
+    return true;
+  });
+
+  // ---- Bond / Cozy / Mood IPC surface ----
+  // These handlers back the `mp.bond.*` API exposed via preload. The pet
+  // window also calls them for the one-shot interactions (摸/拍/喂/玩/睡/
+  // 贴) that aren't covered by the right-click menu.
+  ipcMain.handle('bond:get_snapshot', (_e, petId) => {
+    return petInteractions.getBondSnapshot(db, petId);
+  });
+
+  ipcMain.handle('bond:get_weekly_breakdown', (_e, petId) => {
+    return petInteractions.getWeeklyBreakdown(db, petId);
+  });
+
+  ipcMain.handle('bond:get_cozy_snapshot', (_e, petId) => {
+    return petInteractions.getCozySnapshot(db, petId);
+  });
+
+  ipcMain.handle('bond:get_full_state', (_e, petId) => {
+    // Composite snapshot used by the bond page so the renderer doesn't
+    // need to round-trip four IPC calls. All four engines are pure
+    // functions over the DB row, so this is safe to call at any cadence.
+    const id = petId || db.getSetting('pet_id');
+    const bond = petInteractions.getBondSnapshot(db, id);
+    const cozy = petInteractions.getCozySnapshot(db, id);
+    const mood = petInteractions.computeMood(db, petMoodMod.computeMood, 0, id);
+    return Object.assign({}, bond, cozy, { mood: mood.mood });
+  });
+
+  // Cozy interactions — single shared handler so we can gate all six
+  // actions the same way and keep variant/particle side effects in one
+  // place. `action` is one of: pet | pat | feed | play | sleep | cuddle.
+  const COZY_HANDLERS = ['pet', 'pat', 'feed', 'play', 'sleep', 'cuddle'];
+  for (const action of COZY_HANDLERS) {
+    ipcMain.handle(`bond:${action}`, () => {
+      const id = db.getSetting('pet_id');
+      const tier = bondEngine.getBondSnapshot(db, id).tier | 0 || 1;
+      const out = petInteractions.applyCozyInteraction(
+        db, action, { bondTier: tier }, db.nowStr.bind(db), id,
+      );
+      if (out && out.accepted) {
+        if (out.variant) fireVariant(out.variant, out.oneShotMs || 1800, { minTier: out.minTier || 0 });
+        if (out.particle) sendParticle(out.particle);
+      }
+      return out;
+    });
+  }
+
+  // Celebrate hook — called by the renderer after high-value moments
+  // (5 events/day threshold, memorial recorded, etc.) so the pet flashes
+  // a brief "proud" beat. The today_event flag is set so the next mood
+  // tick resolves to "proud" without a real round of event creates.
+  ipcMain.handle('bond:celebrate', () => {
+    const id = db.getSetting('pet_id');
+    try { petInteractions.celebrate(db, id, db.nowStr.bind(db)); } catch {}
+    try { db.setSetting(`today_event:${id || 'vup'}`, '1'); } catch {}
+    fireVariant('default', 4000);
+    sendParticle('🎉');
+    return { ok: true };
+  });
+
+  // Tier 7 dance: refuses unless the user has reached legendary.
+  ipcMain.handle('bond:trigger_legendary_dance', () => {
+    const id = db.getSetting('pet_id');
+    const bond = bondEngine.getBondSnapshot(db, id);
+    if (bond.tier < 7) return { ok: false, reason: 'tier', tier: bond.tier };
+    fireVariant('default', 5000);
+    sendParticle('🌟');
+    return { ok: true };
+  });
+
+  // Mute / unmute — v1 has no audio yet, but we still store the flag so
+  // the menu reads the right state and future audio hooks can respect it.
+  ipcMain.handle('bond:set_muted', (_e, m) => {
+    db.setSetting('pet_muted', m ? '1' : '0');
+    return true;
+  });
+  ipcMain.handle('bond:get_muted', () => db.getSetting('pet_muted') === '1');
+
+  // Logged by the renderer when the user dwells on a contact (>5s on the
+  // detail page). One record per contact per week — duplicates are
+  // de-duped inside `logContactReviewed` so spamming the page can't
+  // inflate the dimension.
+  ipcMain.handle('bond:log_contact_viewed', (_e, contactId) => {
+    petInteractions.logContactReviewed(db, contactId, db.nowStr.bind(db));
     return true;
   });
 

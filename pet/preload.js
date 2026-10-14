@@ -26,6 +26,20 @@ contextBridge.exposeInMainWorld('mp', {
   app: {
     quit: () => ipcRenderer.invoke('app:quit'),
   },
+  // Bond / Cozy / Mood surface used by the pet renderer. The doubleclick
+  // handler in pet.js calls `mp.bond.pat()`; the right-click menu also
+  // dispatches here indirectly via the main process IPC handlers.
+  bond: {
+    getSnapshot:      () => ipcRenderer.invoke('bond:get_snapshot'),
+    getFullState:     () => ipcRenderer.invoke('bond:get_full_state'),
+    pet:      () => ipcRenderer.invoke('bond:pet'),
+    pat:      () => ipcRenderer.invoke('bond:pat'),
+    feed:     () => ipcRenderer.invoke('bond:feed'),
+    play:     () => ipcRenderer.invoke('bond:play'),
+    sleep:    () => ipcRenderer.invoke('bond:sleep'),
+    cuddle:   () => ipcRenderer.invoke('bond:cuddle'),
+    celebrate:() => ipcRenderer.invoke('bond:celebrate'),
+  },
   on: (channel, cb) => {
     const allowed = [
       'pet:state-changed',
@@ -33,6 +47,16 @@ contextBridge.exposeInMainWorld('mp', {
       'pet:action-changed',
       'pet:pet-changed',
       'pet:size-changed',
+      // Bond / Cozy / Mood broadcast channels. Mood changes are
+      // emitted only when the mood key actually flips, so the renderer
+      // can apply the new CSS filter on every event without diffing.
+      'pet:mood-changed',
+      'pet:cozy-changed',
+      'pet:bond-tier-changed',
+      // One-shot particles (heart / sparkle / food / etc.) requested by
+      // either the right-click menu or a cozy interaction. Renderer
+      // spawns a transient <div> on the .pet-particles layer.
+      'pet:particle',
     ];
     if (!allowed.includes(channel)) return () => {};
     const listener = (_e, payload) => cb(payload);

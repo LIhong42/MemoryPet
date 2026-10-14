@@ -253,6 +253,36 @@ window.addEventListener('contextmenu', (e) => {
   M.pet.openContextMenu();
 });
 
+// ---- Bond / Cozy / Mood wiring ----
+//
+// Doubleclick = "pat" (tier≥5). Single click is intentionally a no-op
+// (the main window is PIN-gated and must be opened via right-click), so
+// we promote dblclick to a meaningful action. The main process also
+// gates `pat` behind the bond tier — if the pet is below tier 5 the
+// call silently returns `accepted:false`.
+//
+// Single click DOES still trigger a generic "pet" cozy interaction so
+// that even low-tier users get some feedback for touching the pet.
+// (Tier 5 is the "pat" upgrade; tier 1 still gets the soft "pet".)
+let _singleClickPetTimer = null;
+sprite.addEventListener('click', () => {
+  // Defer the "pet" by 220ms so a dblclick can cancel it. dblclick fires
+  // after the second click, so this is a clean race-free handoff.
+  if (_singleClickPetTimer) clearTimeout(_singleClickPetTimer);
+  _singleClickPetTimer = setTimeout(() => {
+    _singleClickPetTimer = null;
+    if (M.bond && M.bond.pet) {
+      try { M.bond.pet(); } catch (e) { /* best-effort */ }
+    }
+  }, 220);
+});
+sprite.addEventListener('dblclick', () => {
+  if (_singleClickPetTimer) { clearTimeout(_singleClickPetTimer); _singleClickPetTimer = null; }
+  if (M.bond && M.bond.pat) {
+    try { M.bond.pat(); } catch (e) { /* best-effort */ }
+  }
+});
+
 // ---- Subscriptions from the main process ----
 if (M.on) {
   M.on('pet:state-changed', (payload) => {
@@ -296,6 +326,59 @@ if (M.on) {
       return;
     }
     playVariant(payload.action, payload.direction);
+  });
+
+  // Mood broadcast — apply the data-mood attribute so CSS picks the
+  // right filter. Also flash a soft bubble for happy_clingy / proud /
+  // festive moods where pet_mood provided a line of text.
+  M.on('pet:mood-changed', (payload) => {
+    if (!payload) return;
+    if (payload.mood) sprite.dataset.mood = payload.mood;
+    const bondBubble = document.getElementById('pet-bond-bubble');
+    const txt = payload.bubbleText || payload.bubble_text;
+    if (bondBubble) {
+      if (txt) {
+        bondBubble.textContent = txt;
+        bondBubble.classList.remove('hidden');
+        // Auto-hide after 4s so the bubble doesn't pile up.
+        clearTimeout(bondBubble._timer);
+        bondBubble._timer = setTimeout(() => {
+          bondBubble.classList.add('hidden');
+        }, 4000);
+      } else {
+        bondBubble.classList.add('hidden');
+      }
+    }
+  });
+
+  // Cozy / bond-tier broadcasts — also route the cozy value to the data
+  // attribute so future CSS hooks (e.g. hunger bar) can read it.
+  M.on('pet:cozy-changed', (payload) => {
+    if (!payload) return;
+    if (typeof payload.value === 'number') sprite.dataset.cozy = String(Math.round(payload.value));
+  });
+  M.on('pet:bond-tier-changed', (payload) => {
+    if (!payload) return;
+    if (typeof payload.tier === 'number') sprite.dataset.bondTier = String(payload.tier);
+  });
+
+  // One-shot particles — append a transient <span> to the .pet-particles
+  // layer. The CSS animation removes the element automatically after
+  // floatUp finishes (we also drop it from the DOM to be safe).
+  const particlesRoot = document.getElementById('pet-particles');
+  M.on('pet:particle', (payload) => {
+    if (!particlesRoot || !payload || !payload.char) return;
+    const span = document.createElement('span');
+    span.className = 'particle';
+    span.textContent = payload.char;
+    if (typeof payload.x === 'number' && typeof payload.y === 'number') {
+      span.style.left = `${payload.x}%`;
+      span.style.top = `${payload.y}%`;
+    }
+    particlesRoot.appendChild(span);
+    setTimeout(() => {
+      if (span.parentNode) span.parentNode.removeChild(span);
+    }, 1500);
   });
 }
 

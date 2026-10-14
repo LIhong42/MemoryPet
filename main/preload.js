@@ -148,6 +148,22 @@ contextBridge.exposeInMainWorld('mp', {
     cancel: (payload) => ipcRenderer.invoke('export:cancel', payload || {}),
   },
 
+  // Bond / Cozy / Mood API surface for the main window. The /pets page
+  // uses these to render the tier label, weekly breakdown, today flag,
+  // and current mood. Renderer-side wrappers around the same `mp.pet.*`
+  // IPCs are exposed in pet/preload.js for the pet window.
+  bond: {
+    getSnapshot:       ()      => ipcRenderer.invoke('bond:get_snapshot'),
+    getWeeklyBreakdown:()      => ipcRenderer.invoke('bond:get_weekly_breakdown'),
+    getCozySnapshot:   ()      => ipcRenderer.invoke('bond:get_cozy_snapshot'),
+    getFullState:      ()      => ipcRenderer.invoke('bond:get_full_state'),
+    celebrate:         ()      => ipcRenderer.invoke('bond:celebrate'),
+    legendaryDance:    ()      => ipcRenderer.invoke('bond:trigger_legendary_dance'),
+    setMuted:          (b)     => ipcRenderer.invoke('bond:set_muted', !!b),
+    getMuted:          ()      => ipcRenderer.invoke('bond:get_muted'),
+    logContactViewed:  (id)    => ipcRenderer.invoke('bond:log_contact_viewed', id),
+  },
+
   // Events from main → renderer
   on: (channel, cb) => {
     const allowed = [
@@ -156,6 +172,9 @@ contextBridge.exposeInMainWorld('mp', {
       'main:open-reminder',
       'main:navigate',
       'export:progress',
+      'pet:mood-changed',
+      'pet:cozy-changed',
+      'pet:bond-tier-changed',
     ];
     if (!allowed.includes(channel)) return () => {};
     const listener = (_e, payload) => cb(payload);
