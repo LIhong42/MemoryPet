@@ -34,12 +34,20 @@
       "src/**/*",
       "resources/**/*",
       "package.json",
-      "node_modules/sql.js/**/*",
-      "node_modules/adm-zip/**/*",
-      "node_modules/pdfkit/**/*",
-      "node_modules/ffmpeg-static/**/*",
-      "node_modules/fluent-ffmpeg/**/*",
-      "node_modules/lunar-javascript/**/*"
+      "node_modules/**/*",
+      "!node_modules/.cache/**",
+      "!node_modules/.bin/**",
+      "!node_modules/@electron/**",
+      "!node_modules/electron/**",
+      "!node_modules/electron-builder/**",
+      "!node_modules/electron-builder-lib/**",
+      "!node_modules/jsdom/**",
+      "!node_modules/7zip-bin/**",
+      "!node_modules/app-builder/**",
+      "!node_modules/app-builder-bin/**",
+      "!node_modules/dmg-license/**",
+      "!node_modules/macos-alias/**",
+      "!node_modules/{electron,electron-builder,jsdom,7zip-bin}/**"
     ],
     "asarUnpack": [
       "**/node_modules/ffmpeg-static/**"

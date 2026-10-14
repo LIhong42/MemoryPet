@@ -65,7 +65,7 @@ let timer = null;
 function start({ queue, getPetState, setPetState, setActiveReminder, petController }) {
   function tick() {
     try {
-      scanAndFire({ queue, getPetState, setPetState, setActiveReminder });
+      scanAndFire({ queue, getPetState, setPetState, setActiveReminder, petController });
     } catch (e) {
       console.error('scheduler error:', e);
     }
@@ -78,7 +78,7 @@ function stop() {
   if (timer) { clearInterval(timer); timer = null; }
 }
 
-function scanAndFire({ queue, getPetState, setPetState, setActiveReminder }) {
+function scanAndFire({ queue, getPetState, setPetState, setActiveReminder, petController }) {
   if (!db.get()) return;
   const now = new Date();
   const now_str = db.nowStr();
