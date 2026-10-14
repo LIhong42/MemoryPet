@@ -8,14 +8,23 @@
   "scripts": {
     "start": "node scripts/run-electron.js .",
     "dev": "node scripts/run-electron.js . --dev",
-    "prebuild": "node scripts/prebuild-extract-winCodeSign.js",
+    "postinstall": "node scripts/hoist-call-bind-helpers.js",
+    "prebuild": "node scripts/hoist-call-bind-helpers.js && node scripts/prebuild-extract-winCodeSign.js",
     "build": "npm run prebuild && electron-builder",
     "build:dir": "npm run prebuild && electron-builder --dir"
   },
   "dependencies": {
     "adm-zip": "^0.6.1",
+    "call-bind-apply-helpers": "^1.0.2",
+    "es-errors": "^1.3.0",
+    "es-set-tostringtag": "^2.1.0",
     "ffmpeg-static": "^5.2.0",
     "fluent-ffmpeg": "^2.1.3",
+    "function-bind": "^1.1.2",
+    "get-intrinsic": "^1.3.0",
+    "gopd": "^1.2.0",
+    "has-symbols": "^1.1.0",
+    "hasown": "^2.0.4",
     "lunar-javascript": "^1.6.13",
     "pdfkit": "^0.15.1",
     "sql.js": "^1.10.3"
@@ -28,6 +37,7 @@
   "build": {
     "appId": "com.memorypet.app",
     "productName": "MemoryPet",
+    "asar": false,
     "files": [
       "main/**/*",
       "pet/**/*",
