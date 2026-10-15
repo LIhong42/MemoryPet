@@ -161,6 +161,86 @@ h3 { font-size: 14px; margin: 0; font-weight: 600; }
   border-radius: var(--radius);
 }
 
+/* ---- /tools catalog -------------------------------------------------- */
+/* Card-as-link pattern. `.card.clickable` is the existing hover-lift
+   utility; we extend it with the tool-card markup (icon + name + cta row
+   on top, purpose + input/output dl underneath). Adding a brand-new
+   `.tool-card` keeps the markup free to evolve without dragging the
+   generic card look along for the ride. */
+
+.back-link {
+  display: inline-block;
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 8px;
+  text-decoration: none;
+}
+.back-link:hover { color: var(--accent); }
+
+.tool-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+.tool-card {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+  transition: transform 200ms ease, box-shadow 200ms ease;
+}
+.tool-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+.tool-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.tool-card-icon {
+  font-size: 22px;
+  line-height: 1;
+}
+.tool-card-name {
+  font-weight: 600;
+  font-size: 15px;
+  flex: 1;
+}
+.tool-card-cta {
+  color: var(--accent);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.tool-card-purpose {
+  margin: 0 0 10px;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.tool-card-io {
+  margin: 0;
+  display: grid;
+  gap: 4px;
+}
+.tool-card-io-row {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+}
+.tool-card-io-row dt {
+  color: var(--muted);
+  margin: 0;
+}
+.tool-card-io-row dd {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.5;
+}
+
 input[type="text"], input[type="number"], input[type="date"], input[type="time"], select, textarea {
   width: 100%;
   padding: 8px 10px;
