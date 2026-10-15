@@ -202,6 +202,7 @@ app.whenReady().then(async () => {
     setPetState,
     getPetState,
     setActiveReminder,
+    broadcastPetState,
     petController,
     petRegistry,
   });

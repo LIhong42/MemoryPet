@@ -21,22 +21,48 @@ async function render(args, params) {
   ]);
   const cById = Object.fromEntries(contacts.map((c) => [c.id, c]));
 
+  // 类别内搜索：只过滤工作事件列表。本地筛选覆盖 title/description 和关
+  // 联联系人的显示名，避免再发一次 IPC。
+  const q = ((params && params.q) || '').trim().toLowerCase();
+  const filtered = q ? events.filter((e) => matchesWorkQuery(e, cById, q)) : events;
+  const suppressed = events.length - filtered.length;
+
   app.innerHTML = `
     <div class="row between">
-      <h1>工作事件 ${!pageState.selectMode.active && events.length > 0 ? bulkEnterLinkHtml() : ''}</h1>
+      <h1>工作事件 ${!pageState.selectMode.active && filtered.length > 0 ? bulkEnterLinkHtml() : ''}</h1>
       <button class="btn" id="new-event">+ 新建</button>
+    </div>
+    <div class="page-search">
+      <input type="search" id="work-q" placeholder="在工作事件中搜索…" autocomplete="off" />
+      ${q ? `<button class="btn secondary" id="work-clear" type="button">清除</button>` : ''}
+      ${q ? `<span class="meta">${filtered.length} / ${events.length} 条匹配</span>` : ''}
     </div>
     ${pageState.selectMode.active ? bulkToolbarHtml({
         count: pageState.selectMode.selected.size,
-        total: events.length,
+        total: filtered.length,
         kindLabel: '个工作事件',
       }) : ''}
     ${events.length === 0
       ? `<div class="empty">还没有工作事件 · 点 + 新建 创建一个</div>`
-      : events.map((e) => pageState.selectMode.active
-          ? bulkSelectableRowHtml(rowInner(e, cById), e.id, pageState.selectMode.selected.has(e.id), 'work')
-          : renderRow(e, cById)).join('')}
+      : filtered.length === 0
+        ? `<div class="empty">没有匹配「${escapeHtml(q)}」的工作事件 · 已隐藏 ${suppressed} 条</div>`
+        : filtered.map((e) => pageState.selectMode.active
+            ? bulkSelectableRowHtml(rowInner(e, cById), e.id, pageState.selectMode.selected.has(e.id), 'work')
+            : renderRow(e, cById)).join('')}
   `;
+
+  // Mirror URL → input + wire IME-safe flush. Same logic as the memorial
+  // page — lives here as an independent copy because each page owns its
+  // own input element (and `data-wired` guards against double-binding).
+  const input = document.getElementById('work-q');
+  if (input && input.value !== q) input.value = q;
+  wireWorkPageSearch({
+    input,
+    inputId: 'work-q',
+    clearId: 'work-clear',
+    basePath: '/events/work',
+    q,
+  });
 
   if (!pageState.selectMode.active) {
     app.querySelectorAll('.card.clickable').forEach((el) => {
@@ -72,7 +98,7 @@ async function render(args, params) {
       });
       t.outerHTML = bulkToolbarHtml({
         count: pageState.selectMode.selected.size,
-        total: events.length,
+        total: filtered.length,
         kindLabel: '个工作事件',
       });
       wireBulkToolbar(app, pageState.selectMode, handlers);
@@ -141,6 +167,78 @@ function kindLabel(k) {
 
 function tagKindLabel(k) {
   return ({ birthday: '生日', anniversary: '纪念日', festival: '节日' }[k]) || '';
+}
+
+// Local search predicate for work events. Work events have far fewer
+// user-visible fields than memorial events — the row's primary text is
+// `description`, with `title` as a fallback and `contact.name` for the
+// linked contact. We substring-match across all three so a query like
+// "周报" hits the description; "张三" hits the linked contact.
+function matchesWorkQuery(e, cById, q) {
+  if (!q) return true;
+  const fields = [e.title, e.description];
+  for (const f of fields) {
+    if (typeof f === 'string' && f.toLowerCase().includes(q)) return true;
+  }
+  if (e.contact_id && cById && cById[e.contact_id]) {
+    const name = cById[e.contact_id].name || '';
+    if (typeof name === 'string' && name.toLowerCase().includes(q)) return true;
+  }
+  return false;
+}
+
+// Wire the work-page search input. Independent copy of the memorial page's
+// helper because each page owns a separate DOM node — sharing a single
+// utility would force the page files to coordinate via a shared module, and
+// the bodies are short enough that duplicating keeps each page self-contained.
+// IME composition (中文/微软拼音/百度输入法等的候选词输入) is handled by
+// debouncing through rAF + a 120ms idle settle, plus an immediate flush at
+// the compositionend boundary.
+function wireWorkPageSearch({ input, inputId, clearId, basePath, q }) {
+  if (!input) return;
+  if (!input.dataset.wired) {
+    input.dataset.wired = '1';
+    let pendingValue = null;
+    let scheduled = false;
+    let settleTimer = null;
+    const flush = () => {
+      scheduled = false;
+      settleTimer = null;
+      const v = pendingValue;
+      pendingValue = null;
+      if (v === null) return;
+      const trimmed = v.trim();
+      const target = trimmed
+        ? basePath + (basePath.includes('?') ? '&' : '?') + 'q=' + encodeURIComponent(trimmed)
+        : basePath;
+      const current = (location.hash || '').replace(/^#/, '');
+      if (current === target) return;
+      navigate(target);
+    };
+    const schedule = (v) => {
+      pendingValue = v;
+      if (settleTimer) clearTimeout(settleTimer);
+      settleTimer = setTimeout(flush, 120);
+      if (!scheduled) {
+        scheduled = true;
+        requestAnimationFrame(flush);
+      }
+    };
+    input.addEventListener('input', () => schedule(input.value));
+    input.addEventListener('compositionend', () => {
+      if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
+      pendingValue = input.value;
+      flush();
+    });
+  }
+  const clearBtn = document.getElementById(clearId);
+  if (clearBtn) {
+    clearBtn.onclick = () => {
+      if (input.value) input.value = '';
+      navigate(basePath);
+    };
+  }
+  if (q && input !== document.activeElement) input.focus();
 }
 
 register('/events/work', render);

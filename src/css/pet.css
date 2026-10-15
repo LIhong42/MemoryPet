@@ -15,7 +15,13 @@ html, body {
   margin: 0; padding: 0;
   width: var(--size-w); height: var(--size-h);
   background: transparent;
-  overflow: visible;
+  /* Hidden on html/body (instead of visible) so an overflowing child
+     element — reminder-bubble / bond-bubble / particle — never causes
+     the BrowserWindow to display scrollbars, which it otherwise does
+     even when the body itself is transparent. The .pet-root keeps
+     overflow:visible below so those absolute-positioned children
+     still float outside the sprite box without being clipped. */
+  overflow: hidden;
   -webkit-user-select: none;
   user-select: none;
 }
@@ -24,6 +30,10 @@ html, body {
   position: relative;
   width: var(--size-w); height: var(--size-h);
   pointer-events: none;
+  /* Keep absolute-positioned bubbles / particles visible while the
+     html/body above stays `overflow:hidden` (so the Electron window
+     never grows scrollbars). */
+  overflow: visible;
 }
 
 .pet-sprite {

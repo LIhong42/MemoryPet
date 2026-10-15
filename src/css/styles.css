@@ -101,6 +101,19 @@ h3 { font-size: 14px; margin: 0; font-weight: 600; }
 
 .page-actions { display: flex; gap: 8px; margin-bottom: 12px; }
 
+/* Per-page search bar. Lives between the page header and the list — same
+   visual rhythm as the contact edit page's filter row. The input takes the
+   full row when alone; the optional 清除 button + match counter sit beside
+   it. The input itself is sized via the global `input[type=text]` rule
+   above; this only defines the flex layout. */
+.page-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+.page-search input[type="search"] { flex: 1; }
+
 .btn {
   background: var(--accent);
   color: white;
@@ -1217,6 +1230,87 @@ button.chip:hover { filter: brightness(0.97); }
   margin-top: 6px;
   font-size: 12px;
   color: var(--muted);
+}
+
+/* ---- /tools page -------------------------------------------------- */
+/* Visual twin of the export-progress card so the two pages feel like
+   siblings — same orange accent, same fill animation, same height. The
+   result card and small helpers below are tool-specific. */
+
+.tools-card .form-row {
+  align-items: flex-end;
+}
+.tools-card .field-error {
+  color: #b14a3a;
+  font-size: 12px;
+  margin-top: 4px;
+}
+.tools-card code,
+.tools-help code,
+.tools-result-path code {
+  background: var(--accent-soft);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.tools-progress {
+  margin-top: 12px;
+  background: #fff8f4;
+  border-color: var(--accent-soft, #f4a8a0);
+}
+.tools-progress-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.tools-progress-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(244, 168, 160, 0.2);
+  overflow: hidden;
+}
+.tools-progress-fill {
+  height: 100%;
+  background: var(--accent, #c5684a);
+  width: 0%;
+  transition: width 250ms ease;
+}
+.tools-progress-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.tools-result {
+  margin-top: 12px;
+}
+.tools-result-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.tools-result-path {
+  font-size: 13px;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.tools-help ul {
+  margin: 4px 0 0;
+  padding-left: 20px;
+}
+.tools-help li {
+  margin: 2px 0;
 }
 
 /* ============================================================ */

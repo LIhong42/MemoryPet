@@ -1,7 +1,8 @@
 // main/ipc.js — register all ipcMain handlers (sql.js-friendly)
-const { ipcMain, app, screen, Menu, dialog } = require('electron');
+const { ipcMain, app, screen, Menu, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const AdmZip = require('adm-zip');
 const db = require('./db');
 const { fmtDateTime, computeNextFireEvent } = require('./time_util');
@@ -19,12 +20,19 @@ const petInteractions = require('./pet_interactions');
 const bondEngine = require('./bond_engine');
 const cozyEngine = require('./cozy_engine');
 const petMoodMod = require('./pet_mood');
+const videoFrameSplit = require('./video_frame_split');
 
 // Tracks in-flight export jobs so the renderer can cancel them via
 // `export:cancel`. The value is a mutable record: { killed, outPath? }.
 // We don't keep a child handle here because the album modules own the
 // child and expose a `cancelCheck()` callback instead.
 const activeExportJobs = new Map();
+
+// Same job-cancellation tracking for the video-frame-splitter tool.
+// Mutated exactly the same way as activeExportJobs; the renderer only
+// ever needs the `killed` flag plus the jobId it gets back from
+// `tools:split_video_to_frames`.
+const activeToolsJobs = new Map();
 
 // Resolve the name to persist. Accepts legacy first_name/last_name for one
 // release cycle so older renderer builds still work after the schema upgrade;
@@ -40,7 +48,7 @@ function resolveName(input) {
   return legacy || '';
 }
 
-function register({ queue, winMain, winPet, setPetState, getPetState, setActiveReminder, petController, petRegistry }) {
+function register({ queue, winMain, winPet, setPetState, getPetState, setActiveReminder, broadcastPetState, petController, petRegistry }) {
   // ---- Bond / Cozy / Mood glue ----
   // One-line helper called from existing CRUD handlers so we never forget
   // a dimension. Errors are swallowed because bond tracking is best-effort
@@ -1144,6 +1152,14 @@ function normFreeText(s) {
       [source, sourceId, db.nowStr()]
     );
     updatePetState({ queue, setPetState, setActiveReminder });
+    // queue.dismissForToday → emit() → broadcastPetState() fires one
+    // IPC, then updatePetState → setPetState(false) → a second. If
+    // petState was already true the first call leaves
+    // sprite.dataset.state='REMINDER' with count=0 in the renderer
+    // (badge hidden but the shake animation continues) until the
+    // second message lands. Force one authoritative broadcast so the
+    // pet window flips back to NORMAL in one shot.
+    broadcastPetState();
     trackActivity('reminder_completed');
     return true;
   });
@@ -1160,6 +1176,7 @@ function normFreeText(s) {
       [source, sourceId, db.nowStr()]
     );
     updatePetState({ queue, setPetState, setActiveReminder });
+    broadcastPetState();
     trackActivity('reminder_completed');
     return true;
   });
@@ -1178,6 +1195,10 @@ function normFreeText(s) {
     }
     queue.remove(source, sourceId);
     updatePetState({ queue, setPetState, setActiveReminder });
+    // Same flush reasoning as reminders:complete_for_today — guarantee
+    // the pet window flips to NORMAL in a single message so the user
+    // doesn't see the shake animation linger after they hit "稍后".
+    broadcastPetState();
     trackActivity('reminder_snoozed');
     return true;
   });
@@ -2058,6 +2079,164 @@ function normFreeText(s) {
     if (!job) return { ok: false, reason: 'not_found' };
     job.killed = true;
     return { ok: true };
+  });
+
+  // ---- Tools page: video → frames zip -----------------------------------
+  //
+  // Three handlers back the splitter tool:
+  //   tools:split_video_to_frames — input + save dialogs → ffmpeg + zip
+  //   tools:cancel                — flip the killed flag for a running job
+  //   tools:reveal_in_folder      — shell.showItemInFolder on the saved zip
+  //
+  // Both dialogs run in main (same pattern as `pet:import_from_zip`) so the
+  // renderer never has to ship raw video bytes through IPC, and the
+  // produce/check pair stays fast for large files (a 1080p 10-minute video
+  // is hundreds of MB).
+  //
+  // Progress is delivered via `tools:progress` (one-way push), mirroring
+  // `export:progress`.
+
+  function pushToolsProgress(jobId, phase, percent, note) {
+    if (!winMain || winMain.isDestroyed()) return;
+    try {
+      winMain.webContents.send('tools:progress', {
+        jobId, phase,
+        percent: (typeof percent === 'number') ? percent : null,
+        note: note || null,
+      });
+    } catch (e) {
+      console.error('[tools] push progress failed:', e);
+    }
+  }
+
+  function tmpFramesDir() {
+    // Per-run unique temp dir under os.tmpdir(). The finally block at the
+    // call site is responsible for removing it (success, cancel, error
+    // alike) — we don't want to leak hundreds of MB of PNGs across runs.
+    return fs.mkdtempSync(path.join(os.tmpdir(), 'memorypet-frames-'));
+  }
+
+  ipcMain.handle('tools:split_video_to_frames', async (_e, payload = {}) => {
+    const fpsRaw = Number(payload && payload.fps);
+    if (!Number.isFinite(fpsRaw) || fpsRaw <= 0 || fpsRaw > 60) {
+      throw new Error('fps 必须在 0 – 60 之间');
+    }
+    // Three decimal places is plenty for 0.1 step; format 'jpg' is the
+    // only other valid value beside the default 'png'.
+    const fps = Math.round(fpsRaw * 1000) / 1000;
+    const format = (String((payload && payload.format) || 'png').toLowerCase() === 'jpg')
+      ? 'jpg' : 'png';
+
+    const pick = await dialog.showOpenDialog(winMain, {
+      title: '选择视频',
+      properties: ['openFile'],
+      filters: [
+        { name: '视频文件', extensions: ['mp4', 'mov', 'mkv', 'webm', 'avi', 'flv', 'm4v', 'wmv', 'mpg', 'mpeg', '3gp'] },
+        { name: '所有文件', extensions: ['*'] },
+      ],
+    });
+    if (pick.canceled || !pick.filePaths || !pick.filePaths.length) {
+      return { canceled: true };
+    }
+    const inputPath = pick.filePaths[0];
+
+    const stamp = backupStamp();
+    const extSuffix = format === 'jpg' ? 'jpg' : 'png';
+    const defaultName = `memorypet-frames-${stamp}.zip`;
+    const save = await dialog.showSaveDialog(winMain, {
+      title: '保存拆帧压缩包',
+      defaultPath: defaultName,
+      filters: [{ name: '压缩包', extensions: ['zip'] }],
+    });
+    if (save.canceled || !save.filePath) {
+      return { canceled: true };
+    }
+    const outPath = save.filePath;
+
+    const jobId = `tools-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const job = { killed: false };
+    activeToolsJobs.set(jobId, job);
+
+    const cancelCheck = () => job.killed;
+    const progressCb = (info) => {
+      if (job.killed) return;
+      pushToolsProgress(jobId, info.phase, info.percent, info.note);
+    };
+
+    const framesDir = tmpFramesDir();
+    let zipWritten = false;
+    try {
+      const result = await videoFrameSplit.extractFrames({
+        inputPath,
+        outDir: framesDir,
+        fps,
+        format,
+        cancelCheck,
+        progressCb,
+      });
+
+      // Pack the per-frame outputs into the user-chosen zip. We add each
+      // file with its relative filename so OS extractors produce
+      // frame_00001.png, frame_00002.png, … at the top level.
+      progressCb({ phase: 'finalizing', percent: 99, note: '正在打包压缩包' });
+      const zip = new AdmZip();
+      const files = fs.readdirSync(framesDir)
+        .filter((n) => n.startsWith('frame_') && n.endsWith('.' + extSuffix))
+        .sort();
+      for (const fn of files) {
+        zip.addLocalFile(path.join(framesDir, fn), '', fn);
+      }
+      zip.writeZip(outPath);
+      zipWritten = true;
+      progressCb({ phase: 'done', percent: 100, note: `已生成 ${result.frames} 张图片` });
+
+      return {
+        canceled: false,
+        path: outPath,
+        frames: result.frames,
+        bytes: fs.statSync(outPath).size,
+      };
+    } catch (err) {
+      if (job.killed || (err && err.killed)) {
+        // Clean up the half-written zip on cancel. The file may not exist
+        // yet — fs.unlinkSync is fine on a missing path because we wrap
+        // the call in try/catch.
+        try { if (zipWritten && fs.existsSync(outPath)) fs.unlinkSync(outPath); } catch {}
+        return { canceled: true, jobId };
+      }
+      // Same cleanup on real errors: don't leave a 0-byte or partial
+      // zip behind that the user might mistake for output.
+      try { if (zipWritten && fs.existsSync(outPath)) fs.unlinkSync(outPath); } catch {}
+      throw err;
+    } finally {
+      // Always remove the temp frames directory — success or not. fs.rm
+      // with recursive+force is the right hammer here, ignoring EBUSY on
+      // Windows when ffmpeg's release is briefly delayed.
+      try { fs.rmSync(framesDir, { recursive: true, force: true }); } catch {}
+      activeToolsJobs.delete(jobId);
+    }
+  });
+
+  ipcMain.handle('tools:cancel', (_e, payload = {}) => {
+    const jobId = payload && payload.jobId;
+    if (!jobId) return { ok: false, reason: 'no_job_id' };
+    const job = activeToolsJobs.get(jobId);
+    if (!job) return { ok: false, reason: 'not_found' };
+    job.killed = true;
+    return { ok: true };
+  });
+
+  ipcMain.handle('tools:reveal_in_folder', (_e, p) => {
+    const target = typeof p === 'string' ? p : (p && p.path);
+    if (!target) return false;
+    if (!fs.existsSync(target)) return false;
+    try {
+      shell.showItemInFolder(target);
+      return true;
+    } catch (e) {
+      console.error('[tools] reveal_in_folder failed:', e);
+      return false;
+    }
   });
 }
 

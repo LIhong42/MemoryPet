@@ -148,6 +148,18 @@ contextBridge.exposeInMainWorld('mp', {
     cancel: (payload) => ipcRenderer.invoke('export:cancel', payload || {}),
   },
 
+  // Video → frames zip tool. Backed by `tools:split_video_to_frames` and
+  // `tools:cancel` in main/ipc.js. Both dialogs (input + save) run in the
+  // main process — the renderer just kicks off the job and waits.
+  //   splitVideo({ fps, format }) → { canceled } | { canceled:false, path, frames, bytes, jobId }
+  //   cancel({ jobId })           → { ok }
+  //   revealInFolder(path)        → bool; opens OS file manager at path
+  tools: {
+    splitVideo:     (opts) => ipcRenderer.invoke('tools:split_video_to_frames', opts || {}),
+    cancel:         (payload) => ipcRenderer.invoke('tools:cancel', payload || {}),
+    revealInFolder: (path) => ipcRenderer.invoke('tools:reveal_in_folder', path),
+  },
+
   // Bond / Cozy / Mood API surface for the main window. The /pets page
   // uses these to render the tier label, weekly breakdown, today flag,
   // and current mood. Renderer-side wrappers around the same `mp.pet.*`
@@ -172,6 +184,7 @@ contextBridge.exposeInMainWorld('mp', {
       'main:open-reminder',
       'main:navigate',
       'export:progress',
+      'tools:progress',
       'pet:mood-changed',
       'pet:cozy-changed',
       'pet:bond-tier-changed',

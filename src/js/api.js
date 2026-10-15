@@ -123,6 +123,13 @@ export const api = {
     mp4: (payload) => M.export_.mp4(payload || {}),
     cancel: (payload) => M.export_.cancel(payload || {}),
   },
+  // Video → frames zip tool. Main opens the file picker and save dialog so
+  // raw video bytes never have to round-trip through IPC.
+  tools: {
+    splitVideo:     (opts) => M.tools.splitVideo(opts || {}),
+    cancel:         (payload) => M.tools.cancel(payload || {}),
+    revealInFolder: (path) => M.tools.revealInFolder(path),
+  },
   on: (channel, cb) => M.on(channel, cb),
 };
 

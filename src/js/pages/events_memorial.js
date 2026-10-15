@@ -28,27 +28,54 @@ async function render(args, params) {
     if (e.second_photo_id) fetchPhotoDataUrl(e.second_photo_id);
   }
 
+  // 类别内搜索：仅在回忆事件列表内筛选。不发起新的 IPC，而是在已载入的
+  // `events` 上做客户端过滤 —— 服务端 SQL 里事件本身的字段（title/description
+  // 之类）已经是 SELECT *，但 contact_names 是渲染前一次性 join 的内存字段，
+  // 所以服务端 LIKE 反而拿不到关联人名。客户端匹配可以同时覆盖这两类。
+  const q = ((params && params.q) || '').trim().toLowerCase();
+  const filtered = q ? events.filter((e) => matchesMemorialQuery(e, q)) : events;
+  const suppressed = events.length - filtered.length;
+
   app.innerHTML = `
     <div class="row between">
-      <h1>回忆事件 ${!pageState.selectMode.active && events.length > 0 ? bulkEnterLinkHtml() : ''}</h1>
+      <h1>回忆事件 ${!pageState.selectMode.active && filtered.length > 0 ? bulkEnterLinkHtml() : ''}</h1>
       <div class="row" style="gap:8px;">
-        ${events.length > 0
+        ${filtered.length > 0
           ? `<button class="btn secondary" id="open-export">导出回忆</button>`
           : ''}
         <button class="btn" id="new-event">+ 新建</button>
       </div>
     </div>
+    <div class="page-search">
+      <input type="search" id="memorial-q" placeholder="在回忆事件中搜索…" autocomplete="off" />
+      ${q ? `<button class="btn secondary" id="memorial-clear" type="button">清除</button>` : ''}
+      ${q ? `<span class="meta">${filtered.length} / ${events.length} 条匹配</span>` : ''}
+    </div>
     ${pageState.selectMode.active ? bulkToolbarHtml({
         count: pageState.selectMode.selected.size,
-        total: events.length,
+        total: filtered.length,
         kindLabel: '个回忆事件',
       }) : ''}
     ${events.length === 0
       ? `<div class="empty">还没有回忆事件 · 点 + 新建 创建一个</div>`
-      : events.map((e) => pageState.selectMode.active
-          ? bulkSelectableRowHtml(rowInner(e), e.id, pageState.selectMode.selected.has(e.id), 'memorial')
-          : renderRow(e)).join('')}
+      : filtered.length === 0
+        ? `<div class="empty">没有匹配「${escapeHtml(q)}」的回忆事件 · 已隐藏 ${suppressed} 条</div>`
+        : filtered.map((e) => pageState.selectMode.active
+            ? bulkSelectableRowHtml(rowInner(e), e.id, pageState.selectMode.selected.has(e.id), 'memorial')
+            : renderRow(e)).join('')}
   `;
+
+  // Mirror URL → input. Only update when the URL actually has a different
+  // value, otherwise we'd steal the caret mid-IME composition.
+  const input = document.getElementById('memorial-q');
+  if (input && input.value !== q) input.value = q;
+  wirePageSearch({
+    input,
+    inputId: 'memorial-q',
+    clearId: 'memorial-clear',
+    basePath: '/events/memorial' + (params.contact_id ? '?contact_id=' + encodeURIComponent(params.contact_id) : ''),
+    q,
+  });
 
   // Swap in the real data URLs once the IPC round-trip resolves. The render
   // pass above only writes an `src=""` placeholder because `memorialPhotoUrl`
@@ -109,7 +136,7 @@ async function render(args, params) {
       });
       t.outerHTML = bulkToolbarHtml({
         count: pageState.selectMode.selected.size,
-        total: events.length,
+        total: filtered.length,
         kindLabel: '个回忆事件',
       });
       wireBulkToolbar(app, pageState.selectMode, handlers);
@@ -200,6 +227,82 @@ function memorialRowInner(e) {
       ${thumbsHtml(e)}
     </div>
   `;
+}
+
+// Local search predicate for memorial events. We deliberately match across
+// every user-visible field so a typed query feels "find what I see": title,
+// description, place, food, outfit, activities, notes, and the names of any
+// linked contacts. All comparisons are case-insensitive substring matches;
+// there's no stemming or token-splitting — the list is small enough that
+// fuzzy matching would feel surprising rather than helpful.
+function matchesMemorialQuery(e, q) {
+  if (!q) return true;
+  const fields = [e.title, e.description, e.place, e.food, e.outfit, e.activities, e.notes];
+  for (const f of fields) {
+    if (typeof f === 'string' && f.toLowerCase().includes(q)) return true;
+  }
+  const names = (e.contact_names || []).filter(Boolean);
+  for (const n of names) {
+    if (n.toLowerCase().includes(q)) return true;
+  }
+  return false;
+}
+
+// Wire the search input on the memorial page: URL <-> input sync, IME-safe
+// flushing (deferred through rAF + 120ms idle settle), clear button. The
+// input element survives across renders — we only attach handlers once,
+// guarded by a `data-wired` flag. `basePath` is the destination URL minus
+// the `q=...` segment.
+function wirePageSearch({ input, inputId, clearId, basePath, q }) {
+  if (!input) return;
+  if (!input.dataset.wired) {
+    input.dataset.wired = '1';
+    let pendingValue = null;
+    let scheduled = false;
+    let settleTimer = null;
+    const flush = () => {
+      scheduled = false;
+      settleTimer = null;
+      const v = pendingValue;
+      pendingValue = null;
+      if (v === null) return;
+      const trimmed = v.trim();
+      const target = trimmed
+        ? basePath + (basePath.includes('?') ? '&' : '?') + 'q=' + encodeURIComponent(trimmed)
+        : basePath;
+      const current = (location.hash || '').replace(/^#/, '');
+      if (current === target) return;
+      navigate(target);
+    };
+    const schedule = (v) => {
+      pendingValue = v;
+      if (settleTimer) clearTimeout(settleTimer);
+      settleTimer = setTimeout(flush, 120);
+      if (!scheduled) {
+        scheduled = true;
+        requestAnimationFrame(flush);
+      }
+    };
+    input.addEventListener('input', () => schedule(input.value));
+    // IME composition boundary — flush immediately on candidate confirm or
+    // cancel so the user doesn't wait the full 120ms.
+    input.addEventListener('compositionend', () => {
+      if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
+      pendingValue = input.value;
+      flush();
+    });
+  }
+  const clearBtn = document.getElementById(clearId);
+  if (clearBtn) {
+    clearBtn.onclick = () => {
+      if (input.value) input.value = '';
+      navigate(basePath);
+    };
+  }
+  // Refocus the input after a render so users can keep typing without an
+  // extra click. Skip if focus already lives elsewhere (e.g. the user just
+  // tabbed into a row).
+  if (q && input !== document.activeElement) input.focus();
 }
 
 register('/events/memorial', render);
