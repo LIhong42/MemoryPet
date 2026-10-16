@@ -221,7 +221,7 @@ app.whenReady().then(async () => {
   // Bond pipeline — 1s tick that drives cozy decay, mood decision tree,
   // and weekly settlement. Started after scheduler.start() so the reminder
   // queue is already pushing activeCount() correctly into the mood payload.
-  scheduler.startBondPipeline({ petController, winPet, winMain, queue });
+  scheduler.startBondPipeline({ petController, winPet, winMain, queue, petRegistry });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindows({ petRegistry: petRegistryRef });

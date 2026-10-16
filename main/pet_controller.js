@@ -43,6 +43,12 @@ function petRenderSize(defaultSize) {
 // renderer turns these into a manifest `variants` lookup; if the manifest
 // doesn't have the requested variant, the registry falls back to `default`
 // and the CSS filter (driven by `data-mood`) carries the visual difference.
+// Built-in pets ship `default` / `walking` / `reminder`; `pat`, `play`,
+// `sleep`, `cuddle` are reserved by cozy_engine (tier-gated interactions).
+// Anything else a manifest author declares (e.g. `blink`) is accepted too
+// — the trigger_oneShot call below sends a `pet:action-changed` IPC, and
+// the renderer falls back to the default frame set when resolveFrames
+// can't find the variant (see pet_registry's tierForced branch).
 const VALID_VARIANTS = new Set([
   'default', 'walking', 'reminder',
   'pat', 'greet', 'play', 'sleep', 'cuddle',
@@ -74,6 +80,13 @@ class PetController {
     // Bond tier 1..7, synced from main bond_engine on each scheduler tick.
     // Used to gate one-shot variants that require a higher tier.
     this.bondTier = 1;
+    // Variants to cycle through while idle (action === 'default'). Defaults
+    // to a single entry; the scheduler pushes the per-pet config every tick
+    // (see pet_actions_config.loadConfig → setLoopVariants). `_variantCursor`
+    // is advanced inside `_startRandomAction` so the same loop list round-
+    // robins deterministically instead of random-shuffling on each pass.
+    this.loopVariants = ['default'];
+    this._variantCursor = 0;
     // Window/CSS render size for the current pet. Recomputed on setPetId()
     // and used by _bounds() / _stepWalk() so the auto-walk clamp follows
     // the window when its width changes.
@@ -114,6 +127,51 @@ class PetController {
     this.bondTier = t;
   }
 
+  // Replace the idle-loop variant list. Called by the scheduler every tick
+  // (so the controller always sees the latest persisted config) and by the
+  // settings page IPC handler (so the change is reflected immediately
+  // without waiting for the next scheduler tick).
+  //
+  // If the new list is empty or missing 'default', we patch in 'default'
+  // so the renderer never sits on a blank variant.
+  setLoopVariants(variants) {
+    const safe = Array.isArray(variants) && variants.length > 0
+      ? variants.filter((v) => typeof v === 'string' && v)
+      : ['default'];
+    if (!safe.includes('default')) safe.push('default');
+    // Compare to current list — avoid spurious broadcasts when the scheduler
+    // re-applies the same value every second.
+    if (this.loopVariants.length === safe.length &&
+        this.loopVariants.every((v, i) => v === safe[i])) {
+      return;
+    }
+    this.loopVariants = safe;
+    // Reset the cursor to 0 so a freshly-saved config starts from the top.
+    this._variantCursor = 0;
+    // If we're currently in the default (idle) state, the user just edited
+    // the loop — emit a fresh action-changed so the renderer re-resolves
+    // frames against the new variant. Walking/reminder states are
+    // unaffected (the loop only applies to default).
+    if (this.action === 'default' && !this._reminderOn) {
+      this.broadcastAction();
+    }
+  }
+
+  // Pick the variant name to broadcast for the current `action` state.
+  // Default-state variant comes from loopVariants[_variantCursor]; other
+  // states pass through unchanged. Keeping this in one place makes the
+  // "what variant am I playing right now" question answerable from a
+  // single function instead of duplicating the logic in callers.
+  currentVariantName() {
+    if (this._reminderOn) return 'reminder';
+    if (this.action === 'walking') return 'walking';
+    const list = (this.loopVariants && this.loopVariants.length > 0)
+      ? this.loopVariants : ['default'];
+    let idx = this._variantCursor % list.length;
+    if (idx < 0) idx = 0;
+    return list[idx];
+  }
+
   setPetId(id) {
     if (!this.petRegistry) return;
     const known = this.petRegistry.list().map((p) => p.id);
@@ -145,8 +203,21 @@ class PetController {
   // click-triggered `reminder`, etc. `opts.minTier` lets callers gate the
   // request behind the bond tier — useful for `pat` (tier>=5) or
   // `cuddle` (tier>=6) when you don't want IPC round-trips.
+  //
+  // Validation: built-in reserved names pass directly. Other variants are
+  // accepted iff the active pet's manifest actually declares them — this
+  // lets users wire up custom variants like `blink` / `wave` from imported
+  // pets (the /settings 角色动作 editor surfaces whatever the manifest
+  // exposes). Unknown variants fall through silently rather than throwing,
+  // since the renderer's resolveFrames already handles missing variants via
+  // the registry's tierForced fallback.
   triggerOneShot(variant, ms, opts) {
-    if (!VALID_VARIANTS.has(variant)) return;
+    if (!variant || typeof variant !== 'string') return;
+    if (!VALID_VARIANTS.has(variant)) {
+      const m = this.petRegistry && this.petRegistry.getManifest(this.petId);
+      const declared = m && m.variants && Object.prototype.hasOwnProperty.call(m.variants, variant);
+      if (!declared) return;
+    }
     const minTier = (opts && opts.minTier) | 0 || 0;
     if (minTier > 0 && this.bondTier < minTier) return;
     if (this.win && !this.win.isDestroyed()) {
@@ -183,7 +254,10 @@ class PetController {
 
   broadcastAction() {
     if (!this.win || this.win.isDestroyed()) return;
-    const action = this._reminderOn ? 'reminder' : this.action;
+    // Resolve the variant name through currentVariantName so the default-
+    // state branch rotates through the per-pet loop list. Walking and
+    // reminder pass through unchanged.
+    const action = this.currentVariantName();
     this.win.webContents.send('pet:action-changed', {
       petId: this.petId,
       action,
@@ -242,12 +316,18 @@ class PetController {
       this.action = 'walking';
       // 6–12 seconds of walking before going back to default.
       this.actionUntil = Date.now() + 6000 + Math.floor(Math.random() * 6000);
-    } else {
-      // Stay in default — long idle so the pet doesn't appear jittery.
-      // 8–20 seconds of pure default animation between walks.
-      this._pickNextAt = Date.now() + 8000 + Math.floor(Math.random() * 12000);
+      this.broadcastAction();
       return;
     }
+    // Stay in default — advance the loop cursor so a multi-variant
+    // loop_list actually rotates through its entries instead of replaying
+    // the same one. The 4–10s idle window was tightened from the legacy
+    // 8–20s so a user who adds a second variant to the loop actually
+    // sees the rotation within a few seconds of saving.
+    const list = (this.loopVariants && this.loopVariants.length > 0)
+      ? this.loopVariants : ['default'];
+    this._variantCursor = (this._variantCursor + 1) % list.length;
+    this._pickNextAt = Date.now() + 4000 + Math.floor(Math.random() * 6000);
     this.broadcastAction();
   }
 

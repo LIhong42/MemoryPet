@@ -111,8 +111,45 @@ h3 { font-size: 14px; margin: 0; font-weight: 600; }
   align-items: center;
   gap: 8px;
   margin: 0 0 12px;
+  flex-wrap: wrap;
 }
-.page-search input[type="search"] { flex: 1; }
+/* 搜索框本身承担主要宽度；min-width:0 让其在窄屏容器中不被内容撑爆。 */
+.page-search input.page-search-input {
+  flex: 2;
+  min-width: 0;
+  padding: 9px 12px;
+  border-radius: 8px;
+  background: #fff;
+  transition: border-color 120ms ease, box-shadow 180ms ease;
+  /* 禁用 WebKit/Edge 在 type="search" 末尾自带的小 X，与主题色不一致。 */
+  -webkit-appearance: none;
+  appearance: none;
+}
+.page-search input.page-search-input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+.page-search input.page-search-input::placeholder {
+  color: #8a8580; /* 暖灰：与原 --accent-soft、--border 同色调，避免纯灰跳出 */
+  opacity: 1;
+}
+.page-search input.page-search-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+/* 清除按钮宽度紧凑，避免小屏挤压搜索框。 */
+.page-search .page-search-clear {
+  flex: 0 0 auto;
+}
+/* 匹配数徽章 — 与礼物页 .meta 风格一致：浅色小字。 */
+.page-search .page-search-meta {
+  flex: 1 1 100%;
+  color: #8a8580;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  padding-left: 4px;
+}
 
 .btn {
   background: var(--accent);
@@ -1221,6 +1258,213 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
   cursor: pointer;
 }
 .chip-list-actions a:hover { text-decoration: underline; }
+
+/* ---- /settings "角色动作" 卡片 ----------------------------------- */
+/* Two-tabbed editor: (1) a "触发方式 → 动作" mapping table where each
+   row pairs an interaction (click, dblclick, right-click menu items)
+   with a variant dropdown; (2) an ordered "动作循环列表" with explicit
+   ↑ / ↓ / × buttons. The trigger map and the loop list share the
+   available-variants list but render differently because the user
+   thinks about them differently: triggers are "which variant for this
+   interaction", the loop is "the rotation order". */
+
+/* ---- Trigger map (interaction → variant picker) ---- */
+.trigger-map-table {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.trigger-map-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(220px, 1.5fr);
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.trigger-map-row:hover {
+  border-color: var(--accent);
+}
+.trigger-map-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+.trigger-map-picker {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+.trigger-map-picker:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ---- Ordered loop list (variant rotation) ---- */
+.loop-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.loop-list-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  transition: border-color 160ms ease;
+}
+.loop-list-item:hover {
+  border-color: var(--accent);
+}
+.loop-list-index {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-soft, var(--text));
+  min-width: 24px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.loop-list-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+.loop-list-key {
+  font-size: 11px;
+  color: var(--text-soft, var(--text));
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  opacity: 0.7;
+}
+.loop-list-spacer {
+  flex: 1;
+}
+.loop-list-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.loop-list-btn:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.loop-list-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.loop-list-remove {
+  font-size: 16px;
+  font-weight: 600;
+}
+.loop-list-remove:hover:not(:disabled) {
+  background: var(--danger-soft, rgba(220, 53, 69, 0.12));
+  border-color: var(--danger, #dc3545);
+  color: var(--danger, #dc3545);
+}
+.loop-add-select {
+  flex: 1;
+  min-width: 200px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+
+/* ---- Effect bindings table (right-click menu, variant editable) ---- */
+/* Shows the user which particle + variant each right-click menu entry
+   fires. The particle is hard-coded (it's part of the cozy action
+   identity — 喂食 always shows 🍖 鸡腿), but the **variant** column is
+   now an editable <select>: the user can remap, say, 喂食 to play the
+   `blink` variant instead of the default `default`, so their pet does
+   a "smile/eating" animation when fed. Missing override entries fall
+   back to the binding's default_variant on the main side. */
+.effect-bindings-table {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.effect-binding-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.2fr) auto auto minmax(200px, 2fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 13px;
+}
+.effect-binding-label {
+  font-weight: 500;
+  color: var(--text);
+}
+.effect-binding-particle {
+  font-size: 20px;
+  text-align: center;
+  width: 32px;
+  height: 32px;
+  line-height: 32px;
+}
+.effect-binding-arrow {
+  color: var(--text-soft, var(--text));
+  opacity: 0.5;
+  font-size: 14px;
+}
+.effect-binding-picker {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--bg-soft, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.effect-binding-picker:hover {
+  border-color: var(--accent, #4a9eff);
+}
+.effect-binding-picker:focus {
+  outline: none;
+  border-color: var(--accent, #4a9eff);
+  box-shadow: 0 0 0 2px rgba(74, 158, 255, 0.2);
+}
+.effect-binding-tier {
+  font-size: 11px;
+  color: var(--text-soft, var(--text));
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  opacity: 0.7;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
 
 .chip.chip-selected {
   background: var(--accent);

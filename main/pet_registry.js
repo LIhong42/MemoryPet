@@ -234,6 +234,7 @@ class PetRegistry {
       requiresTier: (v.requiresTier | 0) || 1,
       loop: v.loop !== false,
       hasRoots: Array.isArray(v.roots) && v.roots.length > 0,
+      roots: Array.isArray(v.roots) ? v.roots.slice() : [],
     };
   }
 

@@ -255,32 +255,66 @@ window.addEventListener('contextmenu', (e) => {
 
 // ---- Bond / Cozy / Mood wiring ----
 //
-// Doubleclick = "pat" (tier≥5). Single click is intentionally a no-op
-// (the main window is PIN-gated and must be opened via right-click), so
-// we promote dblclick to a meaningful action. The main process also
-// gates `pat` behind the bond tier — if the pet is below tier 5 the
-// call silently returns `accepted:false`.
+// Click → which variant fires is user-configurable from the settings page
+// ("角色动作" 卡片). We cache the latest config in memory and refetch only
+// when the pet changes (see the `pet:pet-changed` handler below) — every
+// click doesn't round-trip the IPC. Cozy-reserved names (the right-click
+// menu items) keep their legacy behavior, fired through `M.bond.*` so the
+// cozy score side effect still applies; anything else goes through
+// `pet:trigger_action` as a one-shot variant. The main-process
+// `triggerOneShot` already has `requiresTier`/tierForced fallback so
+// unknown variants degrade to the default frame set without crashing the
+// renderer.
+
+// In-memory cache of the per-pet actions config. Refreshed on init and on
+// `pet:pet-changed`. The click handler reads this without any await so it
+// doesn't add latency to the pet's perceived response.
 //
-// Single click DOES still trigger a generic "pet" cozy interaction so
-// that even low-tier users get some feedback for touching the pet.
-// (Tier 5 is the "pat" upgrade; tier 1 still gets the soft "pet".)
-let _singleClickPetTimer = null;
-sprite.addEventListener('click', () => {
-  // Defer the "pet" by 220ms so a dblclick can cancel it. dblclick fires
-  // after the second click, so this is a clean race-free handoff.
-  if (_singleClickPetTimer) clearTimeout(_singleClickPetTimer);
-  _singleClickPetTimer = setTimeout(() => {
-    _singleClickPetTimer = null;
-    if (M.bond && M.bond.pet) {
-      try { M.bond.pet(); } catch (e) { /* best-effort */ }
+// Schema (v3):
+//   _actionsCfg = { triggers: { click }, loop_variants: [...] }
+let _actionsCfg = {
+  triggers: { click: 'default' },
+};
+
+// Cozy-reserved names that route through the bond IPC (so cozy scores
+// + tier gate + cooldown still apply) instead of becoming a plain
+// one-shot variant. Anything else (a manifest-declared variant like
+// `blink` / `greet`, or the always-present `default`) is fired as a
+// one-shot via `M.pet.triggerAction`.
+const COZY_KEYS = new Set(['pet', 'pat', 'feed', 'play', 'sleep', 'cuddle']);
+
+async function refreshActionsCfg() {
+  if (!M.pet || !M.pet.actionsConfig) return;
+  try {
+    const r = await M.pet.actionsConfig.get();
+    if (r && r.config && r.config.triggers && typeof r.config.triggers === 'object') {
+      _actionsCfg = r.config;
     }
-  }, 220);
-});
-sprite.addEventListener('dblclick', () => {
-  if (_singleClickPetTimer) { clearTimeout(_singleClickPetTimer); _singleClickPetTimer = null; }
-  if (M.bond && M.bond.pat) {
-    try { M.bond.pat(); } catch (e) { /* best-effort */ }
+  } catch (e) { /* leave previous cache in place */ }
+}
+
+// Fire the configured action for a given interaction id. The settings
+// page maps each interaction (today: just `click`) to a variant name.
+// The right-click menu entries have fixed particle+variant bindings and
+// are NOT routed through this function — the right-click menu in
+// main/ipc.js handles them directly.
+function fireInteraction(interactionId) {
+  const triggers = _actionsCfg && _actionsCfg.triggers;
+  const v = triggers && triggers[interactionId];
+  if (!v) return;
+  if (COZY_KEYS.has(v)) {
+    if (M.bond && typeof M.bond[v] === 'function') {
+      try { M.bond[v](); } catch (e) { /* best-effort */ }
+    }
+    return;
   }
+  if (M.pet && typeof M.pet.triggerAction === 'function') {
+    try { M.pet.triggerAction(v, 1800); } catch (e) { /* best-effort */ }
+  }
+}
+
+sprite.addEventListener('click', () => {
+  fireInteraction('click');
 });
 
 // ---- Subscriptions from the main process ----
@@ -307,6 +341,9 @@ if (M.on) {
       // Force-replay current action under the new pet.
       playVariant(currentAction, currentDirection);
     }
+    // Re-read the click/dblclick mapping for the new pet so the next
+    // user click resolves to a variant the new manifest actually has.
+    refreshActionsCfg();
   });
   M.on('pet:action-changed', (payload) => {
     if (!payload) return;
@@ -387,6 +424,9 @@ if (M.on) {
   try {
     const s = await M.pet.getState();
     setState(s.state, s.count, s.head);
+    // Preload the per-pet click/dblclick config so the very first click
+    // resolves to the user-picked variant instead of the legacy default.
+    refreshActionsCfg();
     if (M.pet.getCurrent) {
       try { currentPetId = await M.pet.getCurrent(); } catch {}
     }

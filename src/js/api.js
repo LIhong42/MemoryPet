@@ -97,6 +97,16 @@ export const api = {
     listInstalled:   ()      => M.pet.listInstalled?.() || Promise.resolve([]),
     importFromZip:   ()      => M.pet.importFromZip?.(),
     removeImported:  (petId) => M.pet.removeImported?.(petId),
+    // Per-pet click / dblclick / idle-loop config (settings page editor;
+    // pet window also reads click_variant/dblclick_variant on each click).
+    //   get()        → { config, available_variants, pet_id }
+    //   save(cfg)    → { ok, config } (validated + filtered against manifest)
+    //   getLoopVariants() → { variants: string[] }
+    actionsConfig: {
+      get:             ()    => M.pet.actionsConfig?.get?.(),
+      save:            (cfg) => M.pet.actionsConfig?.save?.(cfg || {}),
+      getLoopVariants: ()    => M.pet.actionsConfig?.getLoopVariants?.(),
+    },
   },
   settings: {
     get: (k) => M.settings.get(k),

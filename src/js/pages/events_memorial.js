@@ -11,12 +11,20 @@ import {
 } from '../bulk_delete.js';
 
 // selectMode is per-page state so toggling bulk-delete mode doesn't lose
-// the user's checkbox selections on re-render.
-const pageState = { selectMode: { active: false, selected: new Set() } };
+// the user's checkbox selections on re-render. `q` mirrors the current
+// search so the list subtree can be re-filtered without an IPC round-trip;
+// `allEvents` caches the loaded data for the same reason.
+const pageState = {
+  selectMode: { active: false, selected: new Set() },
+  q: '',
+  allEvents: [],
+  basePath: '/events/memorial',
+};
 
 async function render(args, params) {
   const app = document.getElementById('app');
   app.innerHTML = `<div class="empty">载入中…</div>`;
+
   const opts = {};
   if (params.contact_id) opts.contact_id = params.contact_id;
   const events = await api.memorialEvents.list(opts);
@@ -27,30 +35,73 @@ async function render(args, params) {
     if (e.first_photo_id) fetchPhotoDataUrl(e.first_photo_id);
     if (e.second_photo_id) fetchPhotoDataUrl(e.second_photo_id);
   }
+  pageState.allEvents = events;
+  pageState.q = ((params && params.q) || '').trim().toLowerCase();
+  pageState.basePath = '/events/memorial' + (params.contact_id ? '?contact_id=' + encodeURIComponent(params.contact_id) : '');
 
-  // 类别内搜索：仅在回忆事件列表内筛选。不发起新的 IPC，而是在已载入的
-  // `events` 上做客户端过滤 —— 服务端 SQL 里事件本身的字段（title/description
-  // 之类）已经是 SELECT *，但 contact_names 是渲染前一次性 join 的内存字段，
-  // 所以服务端 LIKE 反而拿不到关联人名。客户端匹配可以同时覆盖这两类。
-  const q = ((params && params.q) || '').trim().toLowerCase();
-  const filtered = q ? events.filter((e) => matchesMemorialQuery(e, q)) : events;
-  const suppressed = events.length - filtered.length;
-
+  // Same static-shell-plus-replaceable-subtree pattern as the work page
+  // and the gift page: the search input lives OUTSIDE the rewritten list,
+  // so typing IME Chinese candidates never tears down the live input.
+  const initialQ = pageState.q;
   app.innerHTML = `
-    <div class="row between">
-      <h1>回忆事件 ${!pageState.selectMode.active && filtered.length > 0 ? bulkEnterLinkHtml() : ''}</h1>
+    <div id="page-header" class="row between">
+      <h1>回忆事件 ${!pageState.selectMode.active && pageState.allEvents.length > 0 ? bulkEnterLinkHtml() : ''}</h1>
       <div class="row" style="gap:8px;">
-        ${filtered.length > 0
-          ? `<button class="btn secondary" id="open-export">导出回忆</button>`
-          : ''}
+        <button class="btn secondary" id="open-export" style="${pageState.allEvents.length > 0 ? '' : 'display:none;'}">导出回忆</button>
         <button class="btn" id="new-event">+ 新建</button>
       </div>
     </div>
     <div class="page-search">
-      <input type="search" id="memorial-q" placeholder="在回忆事件中搜索…" autocomplete="off" />
-      ${q ? `<button class="btn secondary" id="memorial-clear" type="button">清除</button>` : ''}
-      ${q ? `<span class="meta">${filtered.length} / ${events.length} 条匹配</span>` : ''}
+      <input type="search" id="memorial-q" class="page-search-input"
+             placeholder="在回忆事件中搜索…" autocomplete="off" />
+      <button class="btn secondary page-search-clear" id="memorial-clear" type="button"
+              style="${initialQ ? '' : 'display:none;'}">清除</button>
+      <span class="meta page-search-meta" style="${initialQ ? '' : 'display:none;'}"></span>
     </div>
+    <div id="memorial-list"></div>
+  `;
+
+  // Set initial query value on the freshly-mounted input only this once;
+  // subsequent keystrokes read from the same node.
+  const input = document.getElementById('memorial-q');
+  if (input) input.value = initialQ;
+
+  wireSearchInput();
+  rerenderList();
+  applyPhotos();
+
+  // 静态头部按钮一次性绑定；行级 click handler 由 rerenderList() 在每次
+  // 列表重绘时重新绑定，避免初次 mount 后又被覆盖。
+  document.getElementById('new-event').onclick = () =>
+    navigate('/events/new?category=memorial' + (params.contact_id ? '&contact_id=' + params.contact_id : ''));
+  const exportBtn = document.getElementById('open-export');
+  if (exportBtn) exportBtn.onclick = () => navigate('/export');
+
+  wireBulk();
+}
+
+// Re-render ONLY the list subtree (#memorial-list) and the search-row
+// chrome (清除 button, 匹配数, 导出按钮可见性). Never touches
+// #memorial-q — IME composition context is preserved across keystrokes.
+function rerenderList() {
+  const events = pageState.allEvents;
+  const q = pageState.q;
+  const filtered = q ? events.filter((e) => matchesMemorialQuery(e, q)) : events;
+  const suppressed = events.length - filtered.length;
+
+  const clearBtn = document.getElementById('memorial-clear');
+  if (clearBtn) clearBtn.style.display = q ? '' : 'none';
+  const metaEl = document.querySelector('.page-search-meta');
+  if (metaEl) {
+    metaEl.style.display = q ? '' : 'none';
+    metaEl.textContent = q ? `${filtered.length} / ${events.length} 条匹配` : '';
+  }
+  const exportBtn = document.getElementById('open-export');
+  if (exportBtn) exportBtn.style.display = events.length > 0 ? '' : 'none';
+
+  const host = document.getElementById('memorial-list');
+  if (!host) return;
+  host.innerHTML = `
     ${pageState.selectMode.active ? bulkToolbarHtml({
         count: pageState.selectMode.selected.size,
         total: filtered.length,
@@ -65,90 +116,176 @@ async function render(args, params) {
             : renderRow(e)).join('')}
   `;
 
-  // Mirror URL → input. Only update when the URL actually has a different
-  // value, otherwise we'd steal the caret mid-IME composition.
-  const input = document.getElementById('memorial-q');
-  if (input && input.value !== q) input.value = q;
-  wirePageSearch({
-    input,
-    inputId: 'memorial-q',
-    clearId: 'memorial-clear',
-    basePath: '/events/memorial' + (params.contact_id ? '?contact_id=' + encodeURIComponent(params.contact_id) : ''),
-    q,
-  });
+  if (!pageState.selectMode.active) {
+    host.querySelectorAll('.card.clickable').forEach((el) => {
+      el.onclick = () => navigate('/events/' + el.dataset.id + '?category=memorial');
+    });
+  }
+  if (pageState.selectMode.active) {
+    wireBulkRowChecks(host, pageState.selectMode);
+  }
+}
 
-  // Swap in the real data URLs once the IPC round-trip resolves. The render
-  // pass above only writes an `src=""` placeholder because `memorialPhotoUrl`
-  // is synchronous-only; without this follow-up the browser would mark the
-  // thumbnail as broken and only show the image on the NEXT render (e.g.
-  // after opening + closing the detail page). The `data-photo-id` attribute
-  // is the join key — same pattern as event_edit.js.
-  for (const e of events) {
+// Wire the search input exactly once. IME-safe pattern (120ms idle
+// settle + immediate flush at compositionend) mirrors the work page and
+// the gift page. Differences vs the previous full-rerender design:
+//   - apply() only updates pageState.q + repaints #memorial-list + URL,
+//     it never replaces the input node, so 中文 候选词 are preserved;
+//   - URL sync uses history.replaceState (no history entry pollution,
+//     no router re-render) — same target as the work page.
+function wireSearchInput() {
+  const input = document.getElementById('memorial-q');
+  const clearBtn = document.getElementById('memorial-clear');
+  if (!input) return;
+  if (!input.dataset.wired) {
+    input.dataset.wired = '1';
+    let settleTimer = null;
+    const apply = () => {
+      settleTimer = null;
+      const next = input.value.trim().toLowerCase();
+      pageState.q = next;
+      const targetHash = next
+        ? pageState.basePath + (pageState.basePath.includes('?') ? '&' : '?') + 'q=' + encodeURIComponent(next)
+        : pageState.basePath;
+      if (location.hash !== '#' + targetHash) {
+        try { history.replaceState(null, '', '#' + targetHash); } catch (_) {}
+      }
+      rerenderList();
+    };
+    input.addEventListener('input', () => {
+      if (settleTimer) clearTimeout(settleTimer);
+      settleTimer = setTimeout(apply, 120);
+    });
+    input.addEventListener('compositionend', () => {
+      if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
+      apply();
+    });
+  }
+  if (clearBtn && !clearBtn.dataset.wired) {
+    clearBtn.dataset.wired = '1';
+    clearBtn.onclick = () => {
+      if (input.value) input.value = '';
+      pageState.q = '';
+      const targetHash = pageState.basePath;
+      if (location.hash !== '#' + targetHash) {
+        try { history.replaceState(null, '', '#' + targetHash); } catch (_) {}
+      }
+      rerenderList();
+      input.focus();
+    };
+  }
+}
+
+// Swap in the real data URLs once the IPC round-trip resolves. The
+// initial render only writes `src=""` placeholders because
+// `memorialPhotoUrl` is synchronous; without this follow-up the browser
+// would mark the thumbnail as broken. Iterates over every photo id that
+// was pre-warmed at render() time so first-paint races resolve cleanly.
+function applyPhotos() {
+  for (const e of pageState.allEvents) {
     for (const id of [e.first_photo_id, e.second_photo_id]) {
       if (!id) continue;
       fetchPhotoDataUrl(id).then((url) => {
         if (!url) return;
+        const app = document.getElementById('app');
+        if (!app) return;
         app.querySelectorAll(`img[data-photo-id="${CSS.escape(id)}"]`).forEach((imgEl) => {
           if (imgEl.src !== url) imgEl.src = url;
         });
       });
     }
   }
+}
 
-  if (!pageState.selectMode.active) {
-    app.querySelectorAll('.card.clickable').forEach((el) => {
-      el.onclick = () => navigate('/events/' + el.dataset.id + '?category=memorial');
-    });
-  }
-  document.getElementById('new-event').onclick = () =>
-    navigate('/events/new?category=memorial' + (params.contact_id ? '&contact_id=' + params.contact_id : ''));
+// Bulk-select wiring. Lives outside the rewritten subtree so it can
+// re-bind on every list redraw without double-firing.
+function wireBulk() {
+  const handlers = {
+    onDelete: async (ids) => {
+      const result = await api.memorialEvents.deleteMany(ids);
+      // 删除后重新拉取数据；保留输入框的当前值。
+      const params = { q: pageState.q, contact_id: pageState.basePath.includes('contact_id=') ? new URLSearchParams(pageState.basePath.split('?')[1]).get('contact_id') : undefined };
+      await reloadAndRender(params);
+      return result;
+    },
+    onExit: () => {
+      pageState.selectMode.active = false;
+      pageState.selectMode.selected = new Set();
+      rerenderList();
+      // 重新挂上「批量删除」入口链接 — 仅当列表非空时显示，否则删除按钮
+      // 会指向无内容的列表，对用户无意义。
+      const header = document.getElementById('page-header');
+      if (pageState.allEvents.length === 0) return;
+      if (header) {
+        const contactQp = pageState.basePath.includes('contact_id=')
+          ? '&contact_id=' + new URLSearchParams(pageState.basePath.split('?')[1]).get('contact_id')
+          : '';
+        const newHeader = document.createElement('div');
+        newHeader.id = 'page-header';
+        newHeader.className = 'row between';
+        newHeader.innerHTML = `
+          <h1>回忆事件 ${bulkEnterLinkHtml()}</h1>
+          <div class="row" style="gap:8px;">
+            <button class="btn secondary" id="open-export">导出回忆</button>
+            <button class="btn" id="new-event">+ 新建</button>
+          </div>
+        `;
+        header.replaceWith(newHeader);
+        document.getElementById('new-event').onclick = () =>
+          navigate('/events/new?category=memorial' + contactQp);
+        const eb = document.getElementById('open-export');
+        if (eb) eb.onclick = () => navigate('/export');
+        wireBulkEnter(newHeader, () => {
+          pageState.selectMode.active = true;
+          pageState.selectMode.selected = new Set();
+          rerenderList();
+        });
+      }
+    },
+  };
 
-  // "导出回忆" lives inside the memorial-events page so the topbar nav
-  // stays untouched. The /export route is still registered globally; we
-  // just enter it from here.
-  const exportBtn = document.getElementById('open-export');
-  if (exportBtn) exportBtn.onclick = () => navigate('/export');
-
-  // Bulk-select mode wiring.
   if (pageState.selectMode.active) {
-    const handlers = {
-      onDelete: async (ids) => {
-        const result = await api.memorialEvents.deleteMany(ids);
-        render(args, params);
-        return result;
-      },
-      onExit: () => {
-        pageState.selectMode.active = false;
-        pageState.selectMode.selected = new Set();
-        render(args, params);
-      },
-    };
     pageState.selectMode.onChange = () => {
-      const t = app.querySelector('[data-bulk-toolbar]');
+      const t = document.querySelector('[data-bulk-toolbar]');
       if (!t) return;
-      // Sync every row checkbox with the current Set — otherwise hitting
-      // "全选" in the toolbar only updates the counter; the per-row boxes
-      // stay empty because they were rendered once at enter-time.
-      app.querySelectorAll('.bulk-row-check').forEach((cb) => {
+      document.querySelectorAll('.bulk-row-check').forEach((cb) => {
         const id = cb.dataset.bulkId;
         if (!id) return;
         cb.checked = pageState.selectMode.selected.has(id);
       });
+      const count = pageState.selectMode.selected.size;
+      const total = pageState.allEvents.filter((e) =>
+        pageState.q ? matchesMemorialQuery(e, pageState.q) : true
+      ).length;
       t.outerHTML = bulkToolbarHtml({
-        count: pageState.selectMode.selected.size,
-        total: filtered.length,
+        count,
+        total,
         kindLabel: '个回忆事件',
       });
-      wireBulkToolbar(app, pageState.selectMode, handlers);
+      wireBulkToolbar(document.getElementById('app'), pageState.selectMode, handlers);
     };
-    wireBulkRowChecks(app, pageState.selectMode);
-    wireBulkToolbar(app, pageState.selectMode, handlers);
+    wireBulkRowChecks(document.getElementById('app'), pageState.selectMode);
+    wireBulkToolbar(document.getElementById('app'), pageState.selectMode, handlers);
   }
-  wireBulkEnter(app, () => {
+  wireBulkEnter(document.getElementById('app'), () => {
     pageState.selectMode.active = true;
     pageState.selectMode.selected = new Set();
-    render(args, params);
+    rerenderList();
   });
+}
+
+async function reloadAndRender(params = {}) {
+  const app = document.getElementById('app');
+  const opts = {};
+  if (params.contact_id) opts.contact_id = params.contact_id;
+  const events = await api.memorialEvents.list(opts);
+  for (const e of events) {
+    if (e.first_photo_id) fetchPhotoDataUrl(e.first_photo_id);
+    if (e.second_photo_id) fetchPhotoDataUrl(e.second_photo_id);
+  }
+  pageState.allEvents = events;
+  pageState.q = ((params && params.q) || '').trim().toLowerCase();
+  render([], { contact_id: params.contact_id, q: pageState.q });
 }
 
 function kindTagLabel(kind) {
@@ -200,7 +337,7 @@ function rowInner(e) {
   return memorialRowInner(e);
 }
 
-// New layout (2026-10-07):
+// Layout:
 //   column 1: title (with kind tag)
 //   column 2: contact names (same font size as the title) + relative time
 //             on the same line
@@ -248,61 +385,8 @@ function matchesMemorialQuery(e, q) {
   return false;
 }
 
-// Wire the search input on the memorial page: URL <-> input sync, IME-safe
-// flushing (deferred through rAF + 120ms idle settle), clear button. The
-// input element survives across renders — we only attach handlers once,
-// guarded by a `data-wired` flag. `basePath` is the destination URL minus
-// the `q=...` segment.
-function wirePageSearch({ input, inputId, clearId, basePath, q }) {
-  if (!input) return;
-  if (!input.dataset.wired) {
-    input.dataset.wired = '1';
-    let pendingValue = null;
-    let scheduled = false;
-    let settleTimer = null;
-    const flush = () => {
-      scheduled = false;
-      settleTimer = null;
-      const v = pendingValue;
-      pendingValue = null;
-      if (v === null) return;
-      const trimmed = v.trim();
-      const target = trimmed
-        ? basePath + (basePath.includes('?') ? '&' : '?') + 'q=' + encodeURIComponent(trimmed)
-        : basePath;
-      const current = (location.hash || '').replace(/^#/, '');
-      if (current === target) return;
-      navigate(target);
-    };
-    const schedule = (v) => {
-      pendingValue = v;
-      if (settleTimer) clearTimeout(settleTimer);
-      settleTimer = setTimeout(flush, 120);
-      if (!scheduled) {
-        scheduled = true;
-        requestAnimationFrame(flush);
-      }
-    };
-    input.addEventListener('input', () => schedule(input.value));
-    // IME composition boundary — flush immediately on candidate confirm or
-    // cancel so the user doesn't wait the full 120ms.
-    input.addEventListener('compositionend', () => {
-      if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
-      pendingValue = input.value;
-      flush();
-    });
-  }
-  const clearBtn = document.getElementById(clearId);
-  if (clearBtn) {
-    clearBtn.onclick = () => {
-      if (input.value) input.value = '';
-      navigate(basePath);
-    };
-  }
-  // Refocus the input after a render so users can keep typing without an
-  // extra click. Skip if focus already lives elsewhere (e.g. the user just
-  // tabbed into a row).
-  if (q && input !== document.activeElement) input.focus();
-}
+// Backward-compat no-op kept at file scope so any external reference
+// (rare, kept for safety) doesn't get a name error.
+function wirePageSearch() { /* no-op; see wireSearchInput() */ }
 
 register('/events/memorial', render);

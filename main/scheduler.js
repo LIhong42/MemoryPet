@@ -244,7 +244,7 @@ module.exports = { start, stop, ReminderQueue, startBondPipeline, stopBondPipeli
 let moodTimer = null;
 let lastMoodEmitted = null;
 
-function startBondPipeline({ petController, winPet, winMain }) {
+function startBondPipeline({ petController, winPet, winMain, petRegistry }) {
   if (moodTimer) return;
   moodTimer = setInterval(() => {
     try {
@@ -266,6 +266,22 @@ function startBondPipeline({ petController, winPet, winMain }) {
       // 3) sync tier onto the controller
       if (petController && typeof petController.setBondTier === 'function') {
         petController.setBondTier(bondSnap.tier);
+      }
+
+      // 3b) sync the user's idle-loop variant list onto the controller so
+      // pets with a "default + greet + pat" config actually rotate through
+      // those variants while idle (instead of always replaying 'default').
+      // The settings page IPC also pushes this directly, so this tick is
+      // mostly a safety net for the "user edited settings, then closed and
+      // reopened the main window" case where the IPC handler isn't on the
+      // path. setLoopVariants short-circuits when the list is unchanged.
+      const petActionsConfig = require('./pet_actions_config');
+      const loopCfg = petActionsConfig.loadConfig(db, petId);
+      const loopFiltered = petActionsConfig.filterAgainstManifest(
+        loopCfg, petRegistry, petId,
+      );
+      if (petController && typeof petController.setLoopVariants === 'function') {
+        petController.setLoopVariants(loopFiltered.loop_variants);
       }
 
       // 4) compute mood

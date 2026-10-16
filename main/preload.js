@@ -111,6 +111,16 @@ contextBridge.exposeInMainWorld('mp', {
     // Active pet's manifest.defaultSize. Pet.js calls this on init so its
     // CSS --size-w / --size-h are correct before the first paint.
     getCurrentSize:  ()        => ipcRenderer.invoke('pet:get_current_size'),
+    // Per-pet click / double-click / idle-loop config (settings page edits
+    // it; pet window reads click_variant/dblclick_variant on each click).
+    //   get()        → { config, available_variants, pet_id }
+    //   save(cfg)    → { ok, config } (validated + filtered against manifest)
+    //   getLoopVariants() → { variants: string[] }
+    actionsConfig: {
+      get:             ()    => ipcRenderer.invoke('pet:actions_config:get'),
+      save:            (cfg) => ipcRenderer.invoke('pet:actions_config:save', cfg || {}),
+      getLoopVariants: ()    => ipcRenderer.invoke('pet:loop_variants:get'),
+    },
   },
   settings: {
     get: (k) => ipcRenderer.invoke('settings:get', k),

@@ -20,6 +20,7 @@ const petInteractions = require('./pet_interactions');
 const bondEngine = require('./bond_engine');
 const cozyEngine = require('./cozy_engine');
 const petMoodMod = require('./pet_mood');
+const petActionsConfig = require('./pet_actions_config');
 const videoFrameSplit = require('./video_frame_split');
 
 // Tracks in-flight export jobs so the renderer can cancel them via
@@ -1475,6 +1476,63 @@ function normFreeText(s) {
     return true;
   });
 
+  // ---- Pet actions config (per-pet click/dblclick mapping + idle loop) ----
+  // The settings page edits the config; the pet window reads click/dblclick
+  // variants to decide what to fire, and the controller reads loop_variants
+  // every scheduler tick to decide what to play while idle. Persistence
+  // shape and defaults live in main/pet_actions_config.js so the three
+  // consumers agree without re-implementing the same JSON.parse fallback.
+  function resolvePetId(petId) {
+    const id = (typeof petId === 'string' && petId) ? petId : db.getSetting('pet_id');
+    return id || null;
+  }
+
+  ipcMain.handle('pet:actions_config:get', (_e, petId) => {
+    const id = resolvePetId(petId);
+    if (!id) {
+      return {
+        config: petActionsConfig.loadConfig(db, null),
+        available_variants: [],
+        trigger_defs: petActionsConfig.TRIGGER_DEFS,
+        effect_bindings: petActionsConfig.EFFECT_BINDINGS,
+        pet_id: null,
+      };
+    }
+    const cfg = petActionsConfig.loadConfig(db, id);
+    const filtered = petActionsConfig.filterAgainstManifest(cfg, petRegistry, id);
+    return {
+      config: filtered,
+      available_variants: petActionsConfig.getAvailableVariants(petRegistry, id),
+      trigger_defs: petActionsConfig.TRIGGER_DEFS,
+      effect_bindings: petActionsConfig.EFFECT_BINDINGS,
+      pet_id: id,
+    };
+  });
+
+  ipcMain.handle('pet:actions_config:save', (_e, petId, cfg) => {
+    const id = resolvePetId(petId);
+    if (!id) throw new Error('未选择桌宠');
+    const filtered = petActionsConfig.filterAgainstManifest(cfg || {}, petRegistry, id);
+    const ok = petActionsConfig.saveConfig(db, id, filtered);
+    if (!ok) throw new Error('保存失败');
+    // Push the new loop list straight into the controller so the renderer
+    // doesn't have to wait for the next 1s scheduler tick to see the change.
+    if (petController && typeof petController.setLoopVariants === 'function') {
+      petController.setLoopVariants(filtered.loop_variants);
+    }
+    return { ok: true, config: filtered };
+  });
+
+  // Lightweight accessor the pet window can call on startup (or after a
+  // pet-switch event) without paying for the full config payload.
+  ipcMain.handle('pet:loop_variants:get', (_e, petId) => {
+    const id = resolvePetId(petId);
+    if (!id) return { variants: ['default'] };
+    const cfg = petActionsConfig.loadConfig(db, id);
+    const filtered = petActionsConfig.filterAgainstManifest(cfg, petRegistry, id);
+    return { variants: filtered.loop_variants };
+  });
+
   ipcMain.handle('window:show_main', () => {
     if (winMain && !winMain.isDestroyed()) {
       winMain.show();
@@ -1556,17 +1614,30 @@ function normFreeText(s) {
       // Tell the pet window to play the variant + optional particle. We
       // intentionally do this here (main process) rather than in the
       // renderer so the menu works even if the pet window is unfocused.
+      //
+      // `map` keeps the parts of the binding that *can't* be customized
+      // (the particle emoji and the one-shot duration + tier gate) and
+      // pulls the variant from the user's per-pet `effect_overrides` via
+      // `getEffectVariant` — falling back to the EFFECT_BINDINGS default
+      // when the user hasn't customized that action. The effect_overrides
+      // map is keyed by cozy action id, so we look it up by `action`.
       const map = {
-        pet: { variant: 'default', ms: 1200, particle: '💗' },
-        pat: { variant: 'pat', ms: 1800, particle: '✨', minTier: 5 },
-        feed: { variant: 'default', ms: 1500, particle: '🍖' },
-        play: { variant: 'play', ms: 2000, particle: '🧶', minTier: 3 },
-        sleep: { variant: 'sleep', ms: 2200, particle: '💤', minTier: 2 },
-        cuddle: { variant: 'cuddle', ms: 2500, particle: '💞', minTier: 6 },
+        pet:    { ms: 1200, particle: '💗' },
+        pat:    { ms: 1800, particle: '✨', minTier: 5 },
+        feed:   { ms: 1500, particle: '🍖' },
+        play:   { ms: 2000, particle: '🧶', minTier: 3 },
+        sleep:  { ms: 2200, particle: '💤', minTier: 2 },
+        cuddle: { ms: 2500, particle: '💞', minTier: 6 },
       };
       const m = map[action];
       if (m) {
-        fireVariant(m.variant, m.ms, { minTier: m.minTier || 0 });
+        // Resolve the variant at click time. The pet id doesn't change
+        // between menu open and click, so a single loadConfig per click
+        // is fine — it reads from the in-memory DB row, no IPC roundtrip.
+        const petId = db.getSetting('pet_id') || null;
+        const cfg = petId ? petActionsConfig.loadConfig(db, petId) : null;
+        const variant = petActionsConfig.getEffectVariant(cfg, action);
+        fireVariant(variant, m.ms, { minTier: m.minTier || 0 });
         if (m.particle) sendParticle(m.particle);
       }
     };
