@@ -34,8 +34,9 @@ const MAX_ENTRIES     = 1024;
 const MAX_PNG_BYTES   = 32 * 1024 * 1024;    // 32 MiB per single PNG
 
 // Frame-naming convention used by PetRegistry.parseFrames():
-//   ^(.*?)_(\d{3})_(\d{3,4})\.png$
-const FRAME_REGEX_SRC = '^(.*?)_(\\d{3})_(\\d{3,4})\\.png$';
+//   ^(.*?)_(\d{3,7})_(\d{3,5})\.png$
+// 3–7 位序号（覆盖到 100 万帧）和 3–5 位毫秒数（覆盖到 99999 ms ≈ 100 s/帧）。
+const FRAME_REGEX_SRC = '^(.*?)_(\\d{3,7})_(\\d{3,5})\\.png$';
 const FRAME_RE = new RegExp(FRAME_REGEX_SRC, 'i');
 
 // Variant directory → manifest.variants key. `walking.right` and

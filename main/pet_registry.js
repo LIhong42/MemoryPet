@@ -17,7 +17,7 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 
 const REQUIRED_FIELDS = ['id', 'name', 'defaultSize', 'variants'];
-const DEFAULT_FRAME_REGEX = /^(.*?)_(\d{3})_(\d{3,4})\.png$/;
+const DEFAULT_FRAME_REGEX = /^(.*?)_(\d{3,7})_(\d{3,5})\.png$/;
 
 function isDir(p) {
   try { return fs.statSync(p).isDirectory(); } catch { return false; }

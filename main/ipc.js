@@ -2246,9 +2246,10 @@ function normFreeText(s) {
         progressCb,
       });
 
-      // Pack the per-frame outputs into the user-chosen zip. We add each
-      // file with its relative filename so OS extractors produce
-      // frame_00001.png, frame_00002.png, … at the top level.
+      // Pack the per-frame outputs into the user-chosen zip. The files
+      // have already been renamed to `frame_<seq>_<ms>.<ext>` by
+      // video_frame_split.renameWithTimings, so the zip entries carry
+      // both the ordinal and the source timestamp in their filename.
       progressCb({ phase: 'finalizing', percent: 99, note: '正在打包压缩包' });
       const zip = new AdmZip();
       const files = fs.readdirSync(framesDir)

@@ -21,7 +21,7 @@ const tools = [
     icon: '🎞️',
     purpose: '把本地视频按指定帧率逐帧导出为图片，再打包成 zip 下载。',
     input: '一个本地视频文件（mp4 / mov / mkv / webm / avi / m4v 等），加抽帧速率与输出格式 (PNG / JPG)。',
-    output: '一份 zip 压缩包，内含按时间顺序编号的图片 (frame_00001.png 等)。',
+    output: '一份 zip 压缩包，内含按时间顺序编号的图片 (例如 frame_0001_200.png，序号 4 位 + 固定占位 200，不随帧变化)。',
   },
 ];
 
