@@ -13,6 +13,12 @@ contextBridge.exposeInMainWorld('mp', {
     setPaused: (ms) => ipcRenderer.invoke('pet:set_paused', ms),
     openContextMenu: () => ipcRenderer.invoke('pet:context_menu'),
     triggerAction: (action, ms) => ipcRenderer.invoke('pet:trigger_action', action, ms),
+    // Renderer-side signal fired by `FrameAnimator.onEnded` after a
+    // one-shot (movement or cozy) finishes its frame sequence. The
+    // controller uses this to drop back to `default` and re-roll the
+    // next loop action by probability (default 70% / movement 15% /
+    // other 15%). See `handleActionEnded` in main/pet_controller.js.
+    actionEnded: () => ipcRenderer.invoke('pet:action_ended'),
     // New frame-based registry API.
     list: () => ipcRenderer.invoke('pet:list'),
     getCurrent: () => ipcRenderer.invoke('pet:get_current'),

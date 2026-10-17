@@ -124,6 +124,11 @@ const animator = new FrameAnimator(frame);
 // ---- Variant resolution ----
 // Re-resolve every cycle so we get fresh random leaf picks (== the
 // "随机风格变体轮播" decision). Cached preloads are reused.
+//
+// `opts.forceLoop` (when `false`) overrides the manifest's `loop: true` —
+// used by the pet controller's one-shot path for movement actions so the
+// walk/run frames play exactly once instead of cycling visually until the
+// controller says otherwise.
 async function playVariant(action, direction, opts = {}) {
   currentAction = action;
   currentDirection = direction;
@@ -158,7 +163,13 @@ async function playVariant(action, direction, opts = {}) {
   }
   if (currentAction !== action || currentDirection !== direction) return;
 
-  await animator.load(resolved.frames, imgs, resolved.loop);
+  // Honor an explicit `loop` override from the caller (typically from the
+  // controller's `pet:action-changed` payload). Falls back to the
+  // manifest's `loop: true` default when no override is supplied.
+  const shouldLoop = (typeof opts.forceLoop === 'boolean')
+    ? opts.forceLoop
+    : (resolved.loop !== false);
+  await animator.load(resolved.frames, imgs, shouldLoop);
   animator.onEnded = opts.onEnded || null;
   animator.start();
 }
@@ -352,12 +363,22 @@ if (M.on) {
       sprite.dataset.pet = currentPetId;
     }
     if (payload.oneShotMs && payload.action) {
-      // One-shot: play the requested action for `oneShotMs` then fall back to
-      // whatever idle-ish variant the controller would be in underneath.
+      // One-shot: play the requested action for `oneShotMs` then notify
+      // the controller via `pet:action_ended` so it can drop back to
+      // `default` and re-roll the next loop action by probability
+      // (default 70% / movement 15% / other 15%). The controller passes
+      // `loop: false` for both movement and cozy one-shots, so the
+      // frame sequence plays exactly once and `FrameAnimator.onEnded`
+      // fires here when the last frame finishes — that's our
+      // authoritative "action done" signal. The controller's
+      // `actionUntil` timer is a defensive backstop for the rare case
+      // where this IPC never lands.
       playVariant(payload.action, payload.direction || currentDirection, {
+        forceLoop: (typeof payload.loop === 'boolean') ? payload.loop : undefined,
         onEnded: () => {
-          // After one-shot, the next action-changed from the controller will
-          // restore the underlying state. We do nothing here on purpose.
+          if (M.pet && typeof M.pet.actionEnded === 'function') {
+            try { M.pet.actionEnded(); } catch { /* best-effort */ }
+          }
         },
       });
       return;

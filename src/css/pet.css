@@ -61,8 +61,15 @@ html, body {
   -webkit-user-drag: none;
 }
 
-/* Direction: flip the sprite horizontally when walking left. */
-.pet-sprite[data-direction="left"] .pet-frame { transform: scaleX(-1); }
+/* Direction: flip the sprite horizontally when walking left.
+   Scoped to the bare `walking` action only — the per-direction asset
+   sets (`walking.left/right`, `running.left/right`) already face the
+   correct way and must not be double-flipped. Bare `walking` is only
+   emitted by the autonomous wander loop (see PetController.broadcastAction),
+   which composes the asset key from the controller's `actionDirection`. */
+.pet-sprite[data-action="walking"][data-direction="left"] .pet-frame {
+  transform: scaleX(-1);
+}
 
 /* REMINDER state: shake + red glow. */
 .pet-sprite[data-state="REMINDER"] {

@@ -132,13 +132,12 @@ function extractFrames({ inputPath, outDir, fps, format, cancelCheck, progressCb
       })
       .then((writtenCount) => {
         if (killed) throw new Error('cancelled');
-        // Rename to the canonical `frame_<4-digit>_<placeholder>.ext`
+        // Rename to the canonical `frame_<4-digit>_<ms>.ext`
         // shape now that all files are on disk. We do this BEFORE
         // reporting `finalizing` so the zip step (caller side) sees the
-        // final names. The placeholder is a fixed `200` for every frame
-        // — the user asked for it to be a constant so downstream
-        // consumers can pattern-match on a stable middle segment; the
-        // number has no timing meaning.
+        // final names. The trailing `<ms>` is the per-frame interval
+        // (1000/fps, in milliseconds) — the same value for every frame,
+        // since ffmpeg `-vf fps=` emits frames at a constant rate.
         const renamed = renameWithTimings({
           outDir, ext, count: writtenCount, fps,
         });
@@ -238,19 +237,18 @@ function runFfmpeg({ inputPath, outDir, fps, ext, cancelCheck, onFrame }) {
 }
 
 // Rename ffmpeg's `frame_%05d.ext` outputs into the canonical
-// `frame_<4-digit-seq>_200.<ext>` shape. The seq uses 4-digit zero-pad
+// `frame_<4-digit-seq>_<ms>.<ext>` shape. The seq uses 4-digit zero-pad
 // so the filename stays readable for up to 9999 frames; longer videos
 // still work (the seq widens to 5+ digits — that's fine, lexicographic
 // order still lines up with frame order).
 //
-// The middle segment is a hard-coded `200` for every frame. It's not a
-// timestamp — it's a stable placeholder the user asked for so downstream
-// consumers can pattern-match on a constant middle segment. Don't
-// "improve" this into a real per-frame ms; the user explicitly does not
-// want that.
-const FRAME_PLACEHOLDER = '200';
-
-function renameWithTimings({ outDir, ext, count }) {
+// The trailing segment is the per-frame interval in milliseconds
+// (1000 / fps), padded to 3 digits. It's the SAME value for every
+// frame — not a per-frame timestamp — because every extracted frame is
+// spaced by exactly that interval (ffmpeg `-vf fps=` emits a constant-
+// rate output). E.g. fps=5 → all frames end in `_200`; fps=10 → all
+// frames end in `_100`.
+function renameWithTimings({ outDir, ext, count, fps }) {
   // Re-read after the run so we don't race with ffmpeg's last writes.
   let entries;
   try {
@@ -267,11 +265,18 @@ function renameWithTimings({ outDir, ext, count }) {
   // overflow it so the filenames stay compact for typical videos.
   const seqWidth = (count > 9999) ? String(count).length : 4;
 
+  // Per-frame interval in milliseconds — constant across all output
+  // frames. Round so fps=5 lands on exactly 200, fps=10 on exactly 100,
+  // instead of 199.999…. Guard against missing/zero fps so we never
+  // divide by zero.
+  const safeFps = (typeof fps === 'number' && fps > 0) ? fps : 1;
+  const msPerFrame = Math.round(1000 / safeFps);
+
   for (let i = 0; i < entries.length; i += 1) {
     const oldName = entries[i];
     // ffmpeg's %05d output is 1-indexed: the first frame is `frame_00001.png`.
     const seq = i + 1;
-    const newName = `frame_${String(seq).padStart(seqWidth, '0')}_${FRAME_PLACEHOLDER}.${ext}`;
+    const newName = `frame_${String(seq).padStart(seqWidth, '0')}_${String(msPerFrame).padStart(3, '0')}.${ext}`;
     if (oldName === newName) continue;
     try {
       fs.renameSync(path.join(outDir, oldName), path.join(outDir, newName));
@@ -282,4 +287,4 @@ function renameWithTimings({ outDir, ext, count }) {
   return entries.length;
 }
 
-module.exports = { extractFrames, probeDuration, getFfmpegPath, renameWithTimings, FRAME_PLACEHOLDER };
+module.exports = { extractFrames, probeDuration, getFfmpegPath, renameWithTimings };

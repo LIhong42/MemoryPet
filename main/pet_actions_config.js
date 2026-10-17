@@ -29,7 +29,7 @@
 // on the pet sprite) — the dblclick handler was removed because double-
 // clicks are awkward on a small pet window.
 //
-// The right-click menu's cozy actions (摸一下/拍头/喂食/玩耍/睡觉/贴贴)
+// The right-click menu's cozy actions (摸一下/拍头/喂食/玩耍/睡觉/跳舞)
 // live in a separate "effect bindings" structure below. The particle
 // effect for each is hard-coded (chicken-leg for 喂食, yarn for 玩耍,
 // etc. — that's part of the cozy action's identity), but the **pet
@@ -53,7 +53,7 @@ const EFFECT_BINDINGS = [
   { id: 'feed',   label: '右击菜单 · 喂食',   particle: '🍖', default_variant: 'default', minTier: 1, cozy_action: 'feed' },
   { id: 'play',   label: '右击菜单 · 玩耍',   particle: '🧶', default_variant: 'play',    minTier: 3, cozy_action: 'play' },
   { id: 'sleep',  label: '右击菜单 · 睡觉',   particle: '💤', default_variant: 'sleep',   minTier: 2, cozy_action: 'sleep' },
-  { id: 'cuddle', label: '右击菜单 · 贴贴',   particle: '💞', default_variant: 'cuddle',  minTier: 6, cozy_action: 'cuddle' },
+  { id: 'cuddle', label: '右击菜单 · 跳舞',   particle: '💞', default_variant: 'cuddle',  minTier: 6, cozy_action: 'cuddle' },
 ];
 
 const DEFAULTS = Object.freeze({
@@ -226,6 +226,21 @@ function getAvailableVariants(petRegistry, petId) {
 // registry's resolveFrames.
 const COZY_ALLOWED = new Set(['pet', 'pat', 'feed', 'play', 'sleep', 'cuddle']);
 
+// Directional movement keys (`walking.left/right`, `running.left/right`)
+// are valid `triggers.click` / `effect_overrides` values — the user can
+// explicitly trigger them on click or from a (future) right-click entry —
+// but they must NEVER appear in `loop_variants`. The autonomous idle
+// loop uses the bare `walking` key emitted by PetController's
+// `_startRandomAction`; the directional variants are user-initiated
+// actions with their own speed / duration / edge-clamping logic. Silently
+// dropping them from loop_variants prevents the controller from
+// spontaneously wandering in a fixed direction every cycle.
+const { getMovementProfile } = require('./pet_controller');
+function isMovementVariant(v) {
+  const p = getMovementProfile(v);
+  return !!(p && p.direction);
+}
+
 function isVariantAllowed(v, petRegistry, petId) {
   if (typeof v !== 'string' || !v) return false;
   if (v === 'default') return true;
@@ -244,7 +259,8 @@ function filterAgainstManifest(cfg, petRegistry, petId) {
       : DEFAULTS.triggers[def.id];
   }
   const loopRaw = (cfg && cfg.loop_variants) || DEFAULTS.loop_variants;
-  let loop_variants = loopRaw.filter((v) => isVariantAllowed(v, petRegistry, petId));
+  let loop_variants = loopRaw.filter((v) =>
+    isVariantAllowed(v, petRegistry, petId) && !isMovementVariant(v));
   if (!loop_variants.includes('default')) loop_variants.unshift('default');
   if (loop_variants.length === 0) loop_variants = [...DEFAULTS.loop_variants];
   // effect_overrides: same variant validity rule, but each key is

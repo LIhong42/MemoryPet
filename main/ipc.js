@@ -1478,6 +1478,19 @@ function normFreeText(s) {
     return true;
   });
 
+  // Renderer signals back when a one-shot frame sequence has finished
+  // playing (FrameAnimator.onEnded). The controller uses this to drop
+  // back to `default` and re-roll the next loop action by probability
+  // (default 70% / movement 15% / other 15%). This replaces the old
+  // behavior where the controller only resumed after `actionUntil`
+  // elapsed — now the loop continues as soon as the last frame paints.
+  ipcMain.handle('pet:action_ended', () => {
+    if (petController && typeof petController.handleActionEnded === 'function') {
+      petController.handleActionEnded();
+    }
+    return true;
+  });
+
   // One-shot variant (replaces the old Miku-only wave/sing): emit an
   // action-changed IPC for `ms` milliseconds, then the renderer restores
   // the underlying state automatically.
@@ -1681,16 +1694,6 @@ function normFreeText(s) {
         click: () => fireBondAction('sleep'),
       },
       { type: 'separator' },
-      {
-        label: '✨ 庆祝',
-        click: () => {
-          try { petInteractions.celebrate(db); } catch {}
-          // Set a temporary flag so the next mood tick goes "proud".
-          try { db.setSetting(`today_event:${db.getSetting('pet_id') || 'vup'}`, '1'); } catch {}
-          fireVariant('default', 4000);
-          sendParticle('🎉');
-        },
-      },
       {
         label: bondTier >= 7 ? '🏆 传说之舞' : '🔒 传说之舞 (tier7 解锁)',
         enabled: bondTier >= 7,
@@ -2261,7 +2264,8 @@ function normFreeText(s) {
       // Pack the per-frame outputs into the user-chosen zip. The files
       // have already been renamed to `frame_<seq>_<ms>.<ext>` by
       // video_frame_split.renameWithTimings, so the zip entries carry
-      // both the ordinal and the source timestamp in their filename.
+      // both the ordinal and the per-frame interval (in ms) in their
+      // filename; the ms segment is the same for every entry.
       progressCb({ phase: 'finalizing', percent: 99, note: '正在打包压缩包' });
       const zip = new AdmZip();
       const files = fs.readdirSync(framesDir)

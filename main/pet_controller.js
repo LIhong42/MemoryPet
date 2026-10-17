@@ -25,6 +25,145 @@ const TICK_MS = 100;
 const PET_RENDER_HEIGHT = 220;
 const PET_RENDER_MIN_WIDTH = 48;
 
+// ---- Movement profiles ----
+//
+// `walking` (bare) is the autonomous wander loop emitted by
+// `_startRandomAction` — no direction, the renderer's CSS flip rule
+// (scoped to `[data-action="walking"]`) handles orientation.
+//
+// The four compound keys (`walking.left/right`, `running.left/right`) are
+// what `triggerOneShot` uses when the user explicitly picks a directional
+// movement action from /settings or a (future) right-click entry. Running
+// is faster (4~8 px/tick vs walking's 1~2 px/tick) and uses a **random
+// target distance** instead of a fixed duration — `durationMs` is computed
+// from `ceil(distance / speed) * TICK_MS`.
+//
+// Adding a directional running/walking action to the manifest automatically
+// unlocks the corresponding profile here (see `getMovementProfile`); no
+// other code path needs to know.
+const MOVEMENT_PROFILES = {
+  'walking': {
+    base: 'walking', direction: null,
+    minSpeedPxPerTick: 1, maxSpeedPxPerTick: 2,
+    minDurationMs: 6000, maxDurationMs: 12000,
+    targetDistancePx: null,
+  },
+  'walking.left': {
+    base: 'walking', direction: 'left',
+    minSpeedPxPerTick: 1, maxSpeedPxPerTick: 2,
+    minDurationMs: 6000, maxDurationMs: 12000,
+    targetDistancePx: null,
+  },
+  'walking.right': {
+    base: 'walking', direction: 'right',
+    minSpeedPxPerTick: 1, maxSpeedPxPerTick: 2,
+    minDurationMs: 6000, maxDurationMs: 12000,
+    targetDistancePx: null,
+  },
+  'running.left': {
+    base: 'running', direction: 'left',
+    minSpeedPxPerTick: 4, maxSpeedPxPerTick: 8,
+    minDurationMs: 0, maxDurationMs: 0,
+    targetDistancePx: { min: 80, max: 320 },
+  },
+  'running.right': {
+    base: 'running', direction: 'right',
+    minSpeedPxPerTick: 4, maxSpeedPxPerTick: 8,
+    minDurationMs: 0, maxDurationMs: 0,
+    targetDistancePx: { min: 80, max: 320 },
+  },
+};
+
+const DIRECTION_SIGN = { left: -1, right: 1 };
+
+// ---- Loop-action probability table ----
+//
+// When the controller needs to pick the next autonomous action (every
+// `_pickNextAt` cycle, and after a one-shot completes), it samples from
+// three pools with these weights:
+//
+//   default  : 70%  — pet sits in idle; the most common state.
+//   movement : 15%  — split evenly across every movement variant the
+//                      active pet's manifest declares (walking.* /
+//                      running.*). On a pet without any movement
+//                      assets this pool is empty and the 15% falls
+//                      through to `other`.
+//   other    : 15%  — split evenly across `loopVariants` entries that
+//                      are neither `default` nor a movement variant
+//                      (e.g. user-configured `greet` / `blink` /
+//                      `dancing`). When `loopVariants` is empty
+//                      (default config), this pool is empty and the
+//                      unspent weight falls through to `default`.
+//
+// The user explicitly chose this distribution: "默认 50%, 移动 20%,
+// 其它 30%" — meaning each *draw* lands on `default` 50% of the time,
+// `movement` 20%, and any of the user's idle-loop variants 30%. These
+// are **per-draw probabilities**, not screen-time shares.
+//
+// Note that because each draw produces a very different natural
+// duration (default ≈ 0s, movement ≈ 6-12s, other ≈ 1.8-3s), the
+// wall-clock time the pet spends in each category is **not** the
+// same as the draw probability. To prevent the pet from busy-looping
+// `default` re-rolls (which would make the default frames invisible)
+// `default` rolls are held on screen for at least `DEFAULT_MIN_MS`
+// before the controller re-rolls. Movement and other rolls play out
+// their natural duration.
+const DEFAULT_MIN_MS = 2500;
+const DEFAULT_MAX_MS = 5000;
+const LOOP_PROBABILITY = Object.freeze({
+  default: 0.50,
+  movement: 0.20,
+  other: 0.30,
+});
+
+// Idle-window ranges used by `_chooseNextLoopAction`.
+//
+// The original design used long cool-downs (default 8~16s, walk 6~14s,
+// run 8~18s, other 6~12s) so the pet looked "lazy" between actions. The
+// user later asked to switch to **event-driven + per-cycle probability**:
+// as soon as one action finishes, the controller rolls the dice for
+// the next one with no separate "rest" timer — the visual pause between
+// actions is just the natural duration of the `default` variant itself.
+//
+// We keep the per-action duration knobs from `MOVEMENT_PROFILES`, but
+// every "idle" window below is **zero** — the user explicitly asked
+// for pure event-driven + per-cycle probability: when an action
+// finishes, the controller immediately re-rolls the dice for the next
+// one. No cool-down, no breathing pause, no anti-repeat logic. The
+// 50/30/20 distribution is what governs how often each kind fires; the
+// renderer is idempotent on repeat `default` broadcasts (frames are
+// cached, no flicker), so 50% of the time the pet just keeps showing
+// default frames while the controller silently re-rolls.
+//
+// The legacy `IDLE_PICK_NEXT_*` / `POST_WALK_IDLE_*` / `POST_RUN_IDLE_*`
+// / `POST_OTHER_IDLE_*` constants are kept exported (= 0) so any
+// external code that imports them by name still resolves. Re-enable by
+// setting them back to positive ranges if you want cool-downs again.
+const IDLE_PICK_NEXT_MIN_MS = 0;
+const IDLE_PICK_NEXT_JITTER_MS = 0;
+const POST_WALK_IDLE_MIN_MS = 0;
+const POST_WALK_IDLE_JITTER_MS = 0;
+const POST_RUN_IDLE_MIN_MS = 0;
+const POST_RUN_IDLE_JITTER_MS = 0;
+const POST_OTHER_IDLE_MIN_MS = 0;
+const POST_OTHER_IDLE_JITTER_MS = 0;
+
+// `other` loop variants (the ones the user adds to loop_variants via
+// /settings) don't have a built-in profile, so we use these fallbacks
+// for "how long should the pet sit on this action".
+const OTHER_VARIANT_MIN_MS = 1800;
+const OTHER_VARIANT_MAX_MS = 3000;
+
+// Returns the profile entry for `name` iff it's a recognized movement
+// variant (including bare `walking`); otherwise null. Lets the controller
+// pick speed / duration / target-distance uniformly for both the
+// autonomous wander and user-triggered directional movement.
+function getMovementProfile(name) {
+  return Object.prototype.hasOwnProperty.call(MOVEMENT_PROFILES, name)
+    ? MOVEMENT_PROFILES[name]
+    : null;
+}
+
 // Resolve `{w, h}` for the renderer / window given a manifest's
 // `defaultSize`. Always returns PET_RENDER_HEIGHT on `h`. Falls back to
 // 220×220 (square) when the input is missing or malformed.
@@ -52,6 +191,11 @@ function petRenderSize(defaultSize) {
 const VALID_VARIANTS = new Set([
   'default', 'walking', 'reminder',
   'pat', 'greet', 'play', 'sleep', 'cuddle',
+  // Compound directional movement keys — accepted as-is by
+  // triggerOneShot's movement branch so we don't have to fall through to
+  // the manifest check. The manifest still has to declare them for the
+  // renderer to resolve frames.
+  'walking.left', 'walking.right', 'running.left', 'running.right',
 ]);
 
 class PetController {
@@ -87,6 +231,27 @@ class PetController {
     // robins deterministically instead of random-shuffling on each pass.
     this.loopVariants = ['default'];
     this._variantCursor = 0;
+    // Load the active pet's per-pet `pet_actions_config:<petId>` so the
+    // idle loop reflects the user's saved variant list, not just `['default']`.
+    // Without this, a pet that has 9 user-configured loop variants
+    // (e.g. `imported-cb19789a4afbe952` with eating/dancing/blinking/...)
+    // would still roll an empty `otherPool` on every cycle, and the 30%
+    // "other" weight would silently fall through to `default` — making
+    // every action except default/walking invisible on the pet.
+    // The lazy require avoids a require cycle (pet_actions_config.js
+    // already requires pet_controller.js for `getMovementProfile`).
+    if (this.petId) {
+      try {
+        const petActionsConfig = require('./pet_actions_config');
+        const cfg = petActionsConfig.loadConfig(this.db, this.petId);
+        const filtered = petActionsConfig.filterAgainstManifest(cfg, this.petRegistry, this.petId);
+        this.loopVariants = filtered.loop_variants;
+      } catch (e) {
+        // Best-effort: if the config load fails, fall back to ['default'].
+        // Don't break controller construction over a bad config row.
+        console.error('[pet_controller] ctor loadConfig failed:', e && e.message);
+      }
+    }
     // Window/CSS render size for the current pet. Recomputed on setPetId()
     // and used by _bounds() / _stepWalk() so the auto-walk clamp follows
     // the window when its width changes.
@@ -164,18 +329,34 @@ class PetController {
   // single function instead of duplicating the logic in callers.
   currentVariantName() {
     if (this._reminderOn) return 'reminder';
-    if (this.action === 'walking') return 'walking';
-    const list = (this.loopVariants && this.loopVariants.length > 0)
-      ? this.loopVariants : ['default'];
-    let idx = this._variantCursor % list.length;
-    if (idx < 0) idx = 0;
-    return list[idx];
+    // The controller is the source of truth for what variant is playing
+    // right now — `this.action` is set by `_chooseNextLoopAction` /
+    // `triggerOneShot` to whatever was actually rolled. Movement
+    // variants pass through verbatim (they have their own direction);
+    // `default` uses the per-pet loop list cursor so the *default*
+    // frames naturally rotate through the user's `loop_variants` (the
+    // cursor is also driven by the `default` branch in
+    // `_chooseNextLoopAction`). For anything else — an `other` variant
+    // like `eating` / `dancing` / `hearting` rolled from the user's
+    // loop list, or a one-shot variant from `triggerOneShot` — we
+    // return `this.action` directly so the renderer actually plays
+    // those frames instead of falling through to `default`.
+    if (getMovementProfile(this.action)) return this.action;
+    if (this.action === 'default') {
+      const list = (this.loopVariants && this.loopVariants.length > 0)
+        ? this.loopVariants : ['default'];
+      let idx = this._variantCursor % list.length;
+      if (idx < 0) idx = 0;
+      return list[idx];
+    }
+    return this.action;
   }
 
   setPetId(id) {
     if (!this.petRegistry) return;
     const known = this.petRegistry.list().map((p) => p.id);
     if (!known.includes(id)) return;
+    const prevPetId = this.petId;
     this.petId = id;
     this.db.setSetting('pet_id', id);
     if (this.win && !this.win.isDestroyed()) {
@@ -195,14 +376,71 @@ class PetController {
         this.win.webContents.send('pet:size-changed', newSize);
       }
     }
+    // **Per-pet loop list**: when the active pet changes, the idle
+    // loop should pick up *that* pet's saved `pet_actions_config:<id>`
+    // — different pets ship with different variant folders, so each
+    // pet has its own user-configured `loop_variants` list. We load it
+    // here (in addition to the IPC `pet:actions_config:save` path,
+    // which handles user-driven edits) so a fresh app launch with the
+    // imported pet already active gets the right list without the user
+    // having to re-open settings.
+    //
+    // We lazily require `pet_actions_config` here to avoid a require
+    // cycle (pet_actions_config.js already requires pet_controller.js
+    // for `getMovementProfile`).
+    if (id !== prevPetId) {
+      try {
+        const petActionsConfig = require('./pet_actions_config');
+        const cfg = petActionsConfig.loadConfig(this.db, id);
+        const filtered = petActionsConfig.filterAgainstManifest(cfg, this.petRegistry, id);
+        this.setLoopVariants(filtered.loop_variants);
+        this._variantCursor = 0;
+        // Force the new action to be picked immediately so the pet
+        // doesn't sit on the previous pet's frames after a switch.
+        this.action = 'default';
+        this.actionStepVel = 0;
+        this.actionUntil = 0;
+        this._pickNextAt = 0;
+      } catch (e) {
+        // Best-effort: if the config load fails, fall back to whatever
+        // the previous pet had loaded. Don't break pet switching.
+        console.error('[pet_controller] setPetId loadConfig failed:', e && e.message);
+      }
+    }
     this.broadcastAction();
   }
 
   // One-shot: renderer can ask the controller to fire a one-shot variant for
   // `ms` milliseconds, after which the underlying state resumes. Used for
-  // click-triggered `reminder`, etc. `opts.minTier` lets callers gate the
-  // request behind the bond tier — useful for `pat` (tier>=5) or
-  // `cuddle` (tier>=6) when you don't want IPC round-trips.
+  // click-triggered `reminder`, cozy right-click menu entries, and
+  // directional movement. `opts.minTier` lets callers gate the request
+  // behind the bond tier — useful for `pat` (tier>=5) or `cuddle`
+  // (tier>=6) when you don't want IPC round-trips.
+  //
+  // Directional movement (`walking.left/right`, `running.left/right`) is a
+  // special case: instead of just broadcasting, we also drive the
+  // controller's internal motion state (action / direction / speed /
+  // actionUntil) so `tick()` actually moves the window. Before applying
+  // the profile we pre-flight the work area bounds and **reverse the
+  // direction** when the pet is already at the matching edge — a `walking.left`
+  // request at x=0 becomes `walking.right`, preserving the user's intent
+  // (move, just not into the wall).
+  //
+  // **Preemption**: when the user triggers any one-shot while the pet is
+  // mid-walk, the in-progress movement is **cancelled** before the new
+  // action is applied. The user explicitly asked for this: cozy / right-
+  // click actions must not be "interrupted" by an in-flight autonomous
+  // walk — instead, the walk stops and the user action takes over. We
+  // achieve this by clearing `actionUntil` so the next `tick()` no longer
+  // routes through `_stepWalk`, and (for non-movement variants) by
+  // setting `this.action = variant` so `tick()` doesn't accidentally fire
+  // autonomous code mid-one-shot.
+  //
+  // All one-shots now carry `loop: false` on the wire so the renderer
+  // plays the frame sequence **exactly once**. When the sequence
+  // finishes, the renderer signals back via `pet:action_ended` →
+  // `handleActionEnded()` → `_chooseNextLoopAction()`, which re-rolls
+  // the loop by probability (default 70%, movement 15%, other 15%).
   //
   // Validation: built-in reserved names pass directly. Other variants are
   // accepted iff the active pet's manifest actually declares them — this
@@ -213,25 +451,131 @@ class PetController {
   // the registry's tierForced fallback.
   triggerOneShot(variant, ms, opts) {
     if (!variant || typeof variant !== 'string') return;
+    const minTier = (opts && opts.minTier) | 0 || 0;
+    if (minTier > 0 && this.bondTier < minTier) return;
+
+    // ---- Preempt any in-flight movement ----
+    // If the controller is currently mid-walk (either the autonomous
+    // wander loop emitted `walking`, or a previous directional trigger is
+    // still in progress), drop `actionUntil` so the next tick() stops
+    // calling `_stepWalk`. We don't reset `this.action` here — that's
+    // the responsibility of the branch below.
+    if (getMovementProfile(this.action)) {
+      this.actionUntil = 0;
+    }
+
+    // ---- Directional movement branch ----
+    let prof = getMovementProfile(variant);
+    if (prof && prof.direction) {
+      const b = this._bounds();
+      if (!b || !this.win || this.win.isDestroyed()) return;
+
+      // Edge pre-flight: if the requested direction would push the pet
+      // into the wall immediately, swap to the opposite direction. We use
+      // a 0.5 px tolerance to absorb float-rounding from setPosition.
+      let effective = variant;
+      const [x] = this.win.getPosition();
+      const atLeftEdge  = x <= b.x + 0.5;
+      const atRightEdge = x + this.renderW >= b.x + b.w - 0.5;
+      if (prof.direction === 'left'  && atLeftEdge)  effective = `${prof.base}.right`;
+      if (prof.direction === 'right' && atRightEdge) effective = `${prof.base}.left`;
+      const eprof = getMovementProfile(effective);
+      if (!eprof) return;
+
+      const speed = eprof.minSpeedPxPerTick
+        + Math.floor(Math.random() * (eprof.maxSpeedPxPerTick - eprof.minSpeedPxPerTick + 1));
+      let durationMs;
+      if (eprof.targetDistancePx) {
+        const dist = eprof.targetDistancePx.min
+          + Math.floor(Math.random() * (eprof.targetDistancePx.max - eprof.targetDistancePx.min + 1));
+        durationMs = Math.max(1, Math.ceil(dist / speed)) * TICK_MS;
+      } else {
+        durationMs = eprof.minDurationMs
+          + Math.floor(Math.random() * (eprof.maxDurationMs - eprof.minDurationMs));
+      }
+
+      this.action = effective;                                  // e.g. 'walking.left'
+      this.actionDirection = DIRECTION_SIGN[eprof.direction];
+      this.actionStepVel = speed;
+      this.actionUntil = Date.now() + durationMs;
+      // After the movement segment finishes, fall back to default for a
+      // randomized cool-down before any further auto-walk is considered.
+      this._pickNextAt = this.actionUntil + 4000 + Math.floor(Math.random() * 6000);
+
+      this.win.webContents.send('pet:action-changed', {
+        petId: this.petId,
+        action: effective,
+        direction: eprof.direction,
+        oneShotMs: Math.max(durationMs, ms || 1500),
+        loop: false,        // play the walk/run frames exactly once
+      });
+      return;
+    }
+
+    // ---- Generic one-shot branch (non-movement variants) ----
     if (!VALID_VARIANTS.has(variant)) {
       const m = this.petRegistry && this.petRegistry.getManifest(this.petId);
       const declared = m && m.variants && Object.prototype.hasOwnProperty.call(m.variants, variant);
       if (!declared) return;
+    } else {
+      // Even if `variant` is in VALID_VARIANTS (a reserved cozy key),
+      // verify the current pet's manifest actually exposes it. Otherwise
+      // we'd broadcast e.g. `cuddle` to a pet whose manifest only ships
+      // `default`/`walking`, and the renderer's resolveFrames call
+      // throws "pet X has no variant cuddle" — leaking imported-pet
+      // overrides into the default pet.
+      const m2 = this.petRegistry && this.petRegistry.getManifest(this.petId);
+      const declared2 = m2 && m2.variants && Object.prototype.hasOwnProperty.call(m2.variants, variant);
+      if (!declared2 && variant !== 'default') return;
     }
-    const minTier = (opts && opts.minTier) | 0 || 0;
-    if (minTier > 0 && this.bondTier < minTier) return;
+    // Mirror the renderer state on the controller so `tick()` doesn't
+    // accidentally re-route through the autonomous path while the user
+    // one-shot is still playing. The `actionUntil` here acts as a
+    // defensive backstop — the renderer's `pet:action_ended` callback is
+    // the primary signal, but if it never arrives (e.g. IPC failure) the
+    // controller will still recover on its own after `ms` elapses.
+    const oneShotMs = Math.max(300, ms || 1500);
+    this.action = variant;
+    this.actionStepVel = 0;
+    this.actionDirection = this.actionDirection || 1;
+    this.actionUntil = Date.now() + oneShotMs;
+    // Defer the next autonomous re-roll until well after this one-shot
+    // is done; the renderer's onEnded handler will reset this earlier via
+    // `handleActionEnded`, but having a backstop here keeps us sane if
+    // the IPC round-trip ever drops.
+    this._pickNextAt = this.actionUntil + 2000 + Math.floor(Math.random() * 2000);
     if (this.win && !this.win.isDestroyed()) {
       this.win.webContents.send('pet:action-changed', {
         petId: this.petId,
         action: variant,
         direction: this.actionDirection > 0 ? 'right' : 'left',
-        oneShotMs: Math.max(300, ms || 1500),
+        oneShotMs,
+        loop: false,        // play cozy / idle-variant frames exactly once
       });
     }
   }
 
   setPaused(ms) {
     this.db.setSetting('pet_paused_until', String(Date.now() + (ms || 0)));
+  }
+
+  // Called by the renderer when a one-shot (or movement segment) finishes
+  // playing its frame sequence — `M.pet.actionEnded()` →
+  // `ipcMain.handle('pet:action_ended')` → this method. Drops the
+  // controller back to `default` and re-rolls the loop action by
+  // probability. Idempotent: if we're already in `default` (e.g. the
+  // renderer's onEnded fires after a reminder abort), we still re-roll
+  // so a fresh `_pickNextAt` window starts.
+  handleActionEnded() {
+    if (!this.win || this.win.isDestroyed()) return;
+    if (this._reminderOn) {
+      // Reminder state holds position and ignores autonomous actions.
+      // Don't re-roll until the queue empties.
+      return;
+    }
+    this.actionUntil = 0;
+    this.actionStepVel = 0;
+    this._chooseNextLoopAction();
   }
 
   _paused() {
@@ -252,12 +596,46 @@ class PetController {
     return { x: wa.x, y: wa.y, w: wa.width, h: wa.height };
   }
 
+  // Total play time of one full pass through a variant's frame sequence
+  // (Σ frames[i].ms from the manifest). The user noted that walking
+  // variants with 15-18 frames and ~200ms each should play for ~3s,
+  // not the hardcoded 6-12s the controller was using — so we now read
+  // the actual frame timing from the registry instead of trusting
+  // `MOVEMENT_PROFILES.min/maxDurationMs`. Falls back to a sane
+  // default if the registry can't resolve (e.g. during startup, or if
+  // the pet was uninstalled mid-run).
+  _variantPlayMs(variant) {
+    const FALLBACK = 3000;
+    if (!this.petRegistry || !this.petId || !variant) return FALLBACK;
+    let frames;
+    try {
+      const r = this.petRegistry.resolveFrames({ petId: this.petId, variant, bondTier: this.bondTier });
+      frames = r && r.frames;
+    } catch { return FALLBACK; }
+    if (!frames || frames.length === 0) return FALLBACK;
+    let total = 0;
+    for (const f of frames) total += (f.ms || 0);
+    return total > 0 ? total : FALLBACK;
+  }
+
   broadcastAction() {
     if (!this.win || this.win.isDestroyed()) return;
     // Resolve the variant name through currentVariantName so the default-
     // state branch rotates through the per-pet loop list. Walking and
     // reminder pass through unchanged.
-    const action = this.currentVariantName();
+    let action = this.currentVariantName();
+    // The autonomous wander loop still emits bare `'walking'`, but the
+    // bundled pet's manifest only declares per-direction assets
+    // (`walking.left/right`). The registry is a plain key lookup, so we
+    // compose the wire-side action to `walking.<direction>` here — that
+    // way the renderer can resolve frames without us having to either
+    // (a) ship a bare `walking/` asset dir, or (b) teach the registry to
+    // transparently rewrite keys. Internal `this.action` stays bare
+    // `'walking'` so `tick()` keeps routing through `_stepWalk` and the
+    // autonomous flip-on-wall semantics still work.
+    if (action === 'walking') {
+      action = `walking.${this.actionDirection > 0 ? 'right' : 'left'}`;
+    }
     this.win.webContents.send('pet:action-changed', {
       petId: this.petId,
       action,
@@ -296,47 +674,202 @@ class PetController {
       if (now >= this._pickNextAt) this._startRandomAction();
       return;
     }
-    if (this.action === 'walking') {
+    // Anything with a movement profile (bare `walking` from the
+    // autonomous loop, or `walking.left/right` / `running.left/right` from
+    // triggerOneShot) drives `_stepWalk`. `_startRandomAction` continues
+    // to emit bare `walking` for the wander loop.
+    if (getMovementProfile(this.action)) {
       this._stepWalk();
+      return;
+    }
+    // Non-movement action that's already exhausted its duration (e.g.
+    // an `other` variant like `greet` / `blink` that was rolled by
+    // `_chooseNextLoopAction`, or a non-movement one-shot whose render
+    // finished but the `pet:action_ended` IPC never landed). The
+    // renderer's `FrameAnimator.onEnded` is the primary signal for
+    // user-triggered one-shots, but as a defensive backstop we also
+    // re-roll here when the controller's own `actionUntil` timer
+    // expires. This is what makes the loop "event-driven + probability":
+    // every action naturally hands off to the next roll, with no
+    // separate cool-down timer gating it.
+    if (this.actionUntil && now >= this.actionUntil) {
+      this._chooseNextLoopAction();
       return;
     }
   }
 
-  // Pick the next action. To reduce action-switching frequency the controller
-  // spends most of its time in `default` and only occasionally steps out into
-  // `walking`. Action durations are intentionally longer than the legacy
-  // values so the renderer doesn't churn through frames at full speed.
-  _startRandomAction() {
+  // Pick the next action from the loop queue using the configured
+  // probability distribution. Called by `tick()` when `action === 'default'`
+  // and `_pickNextAt` is reached, and by `handleActionEnded()` whenever a
+  // one-shot finishes.
+  //
+  // Sampling works by summing each pool's weight into a "thresholds" array
+  // and picking `Math.random()` against it. Empty pools contribute 0 so
+  // their weight is silently absorbed by `default` (which always has at
+  // least 0.70). When both `movement` and `other` pools are empty, the pet
+  // stays in `default` and `_pickNextAt` is pushed out to keep the timer
+  // happy.
+  _chooseNextLoopAction() {
+    // ---- Build the candidate pools ----
+    // Movement pool: every compound key the active pet's manifest declares
+    // that has a movement profile (walking.* / running.*). Excludes bare
+    // `walking` because that's only used internally by the autonomous
+    // wander — when an external user-facing "walk" cycle fires we use the
+    // per-direction variant that the manifest actually ships.
+    const movementPool = [];
+    if (this.petRegistry) {
+      const m = this.petRegistry.getManifest(this.petId);
+      if (m && m.variants) {
+        for (const key of Object.keys(m.variants)) {
+          if (key !== 'default' && getMovementProfile(key)) movementPool.push(key);
+        }
+      }
+    }
+    // Other pool: every entry in the user's `loop_variants` that's neither
+    // `default` nor a movement variant. `pet_actions_config` already strips
+    // directional movement keys from `loop_variants`, so we just need to
+    // recheck defensively in case a stale config slips through.
+    const otherPool = [];
+    if (Array.isArray(this.loopVariants)) {
+      for (const v of this.loopVariants) {
+        if (!v || v === 'default') continue;
+        if (getMovementProfile(v)) continue;
+        otherPool.push(v);
+      }
+    }
+
+    // ---- Weighted roll ----
+    // Single random pick — we don't even out across many cycles, but the
+    // distribution averages out fast and a single sample per cycle keeps
+    // the controller cheap.
     const r = Math.random();
-    if (r < 0.45) {
-      // Walk — direction may flip, but only with low probability so the pet
-      // doesn't zig-zag across the screen.
-      if (Math.random() < 0.3) this.actionDirection *= -1;
-      this.actionStepVel = 1 + Math.floor(Math.random() * 2);
-      this.action = 'walking';
-      // 6–12 seconds of walking before going back to default.
-      this.actionUntil = Date.now() + 6000 + Math.floor(Math.random() * 6000);
+    const movWeight = movementPool.length > 0 ? LOOP_PROBABILITY.movement : 0;
+    const otherWeight = otherPool.length > 0 ? LOOP_PROBABILITY.other : 0;
+    const defaultWeight = LOOP_PROBABILITY.default + (LOOP_PROBABILITY.movement - movWeight)
+      + (LOOP_PROBABILITY.other - otherWeight);
+
+    const cum = [
+      { kind: 'default', threshold: defaultWeight },
+      { kind: 'movement', threshold: defaultWeight + movWeight },
+      { kind: 'other', threshold: defaultWeight + movWeight + otherWeight },
+    ];
+
+    let kind = 'default';
+    if (r < cum[0].threshold) kind = 'default';
+    else if (r < cum[1].threshold) kind = 'movement';
+    else kind = 'other';
+
+    const now = Date.now();
+    if (kind === 'movement') {
+      const variant = movementPool[Math.floor(Math.random() * movementPool.length)];
+      const prof = getMovementProfile(variant);
+      // Natural play time of the variant's frame sequence. The user
+      // pointed out that with 15-18 frames at ~200ms each, walking
+      // should naturally play for ~3s — not the hardcoded 6-12s. We
+      // resolve the actual frame count + per-frame ms from the
+      // registry and use that as the action duration. The pet then
+      // moves at a speed that makes sense for *that* play length
+      // (1 px/tick over 3s ≈ 30px; over 6s ≈ 60px), so the pet still
+      // covers a visible chunk of screen without outrunning the loop.
+      const playMs = this._variantPlayMs(variant);
+      const ticks = Math.max(1, Math.round(playMs / TICK_MS));
+
+      if (variant === 'walking') {
+        if (Math.random() < 0.3) this.actionDirection *= -1;
+        // Speed scaled so the pet covers ~30~60px in the natural play.
+        this.actionStepVel = 1 + Math.floor(Math.random() * 2);
+        this.action = 'walking';
+        this.actionUntil = now + playMs;
+        this._pickNextAt = this.actionUntil;
+      } else {
+        // walking.<dir> / running.<dir>: honour the direction encoded
+        // in `variant`. Speed is derived from the natural play time
+        // and the target distance (running) or fixed 1-2 px/tick
+        // (walking). For running we keep the original "cover
+        // `targetDistancePx` over the play time" semantics.
+        const dir = prof.direction;
+        const sign = DIRECTION_SIGN[dir] || 1;
+        let speed;
+        if (prof.targetDistancePx) {
+          // Pick a target distance, then back-derive the speed so the
+          // pet covers that distance in exactly `playMs`.
+          const dist = prof.targetDistancePx.min
+            + Math.floor(Math.random() * (prof.targetDistancePx.max - prof.targetDistancePx.min + 1));
+          // ceil(dist / ticks) px/tick — at least 1 so the pet moves.
+          speed = Math.max(1, Math.ceil(dist / ticks));
+        } else {
+          // Walking: 1-2 px/tick is the visual sweet spot the user
+          // liked in the previous tuning. 1 px/tick over ~3s ≈ 30px,
+          // over ~6s ≈ 60px — the pet noticeably moves but doesn't
+          // rocket across the screen.
+          speed = 1 + Math.floor(Math.random() * 2);
+        }
+        this.actionDirection = sign;
+        this.actionStepVel = speed;
+        this.action = variant;
+        this.actionUntil = now + playMs;
+        this._pickNextAt = this.actionUntil;
+      }
       this.broadcastAction();
       return;
     }
-    // Stay in default — advance the loop cursor so a multi-variant
-    // loop_list actually rotates through its entries instead of replaying
-    // the same one. The 4–10s idle window was tightened from the legacy
-    // 8–20s so a user who adds a second variant to the loop actually
-    // sees the rotation within a few seconds of saving.
-    const list = (this.loopVariants && this.loopVariants.length > 0)
-      ? this.loopVariants : ['default'];
-    this._variantCursor = (this._variantCursor + 1) % list.length;
-    this._pickNextAt = Date.now() + 4000 + Math.floor(Math.random() * 6000);
+
+    if (kind === 'other' && otherPool.length > 0) {
+      const variant = otherPool[Math.floor(Math.random() * otherPool.length)];
+      this.action = variant;
+      this.actionStepVel = 0;          // no motion for "other" idle variants
+      this.actionDirection = 0;        // visual direction is meaningless without motion
+      // Natural play time of the variant — e.g. `dancing` (61 frames
+      // × 200ms = 12.2s) plays in full, instead of being cut off at
+      // the previous 1.8-3s `OTHER_VARIANT_MAX_MS` cap. The user
+      // wanted each variant to play *its* animation, not a constant
+      // arbitrary window.
+      const playMs = this._variantPlayMs(variant);
+      this.actionUntil = now + playMs;
+      this._pickNextAt = this.actionUntil;
+      this.broadcastAction();
+      return;
+    }
+
+    // ---- default ----
+    // Hold the default frames on screen for at least DEFAULT_MIN_MS
+    // (up to DEFAULT_MAX_MS) before re-rolling. This gives the user a
+    // visible "still" period between actions — without it, default
+    // re-rolls happen on the very next tick (50% × 50% × 50%… chains
+    // look fine statistically but the default frames are barely
+    // visible because each roll is followed immediately by another).
+    // The hold is implemented as `actionUntil`, so the existing
+    // `tick()` branch
+    //     if (this.actionUntil && now >= this.actionUntil) {
+    //       this._chooseNextLoopAction();
+    //     }
+    // picks it up automatically.
+    this.action = 'default';
+    this.actionStepVel = 0;
+    this.actionDirection = this.actionDirection || 1;
+    this.actionUntil = now + DEFAULT_MIN_MS
+      + Math.floor(Math.random() * (DEFAULT_MAX_MS - DEFAULT_MIN_MS));
+    this._pickNextAt = this.actionUntil;
     this.broadcastAction();
+  }
+
+  // Backwards-compat shim — the old `_startRandomAction` name is referenced
+  // from a few call sites (and from older comments). Redirecting keeps the
+  // rename transparent.
+  _startRandomAction() {
+    this._chooseNextLoopAction();
   }
 
   _stepWalk() {
     if (Date.now() >= this.actionUntil) {
-      this.action = 'default';
-      // Pause in default for a while before considering another walk.
-      this._pickNextAt = Date.now() + 6000 + Math.floor(Math.random() * 10000);
-      this.broadcastAction();
+      // Walk finished (duration elapsed, not a wall bounce — wall bounces
+      // just flip `actionDirection` and keep walking). Roll the dice
+      // immediately for the next action. If it lands on `default` we'll
+      // get a 2.2~4.0s breathing pause via the `default` branch's
+      // `_pickNextAt`. If it lands on another movement we'll re-enter
+      // `_stepWalk` next tick; if `other`, the broadcast already wired
+      // the renderer.
+      this._chooseNextLoopAction();
       return;
     }
     const b = this._bounds();
@@ -356,4 +889,10 @@ class PetController {
   }
 }
 
-module.exports = { PetController, VALID_VARIANTS, petRenderSize };
+module.exports = {
+  PetController,
+  VALID_VARIANTS,
+  petRenderSize,
+  MOVEMENT_PROFILES,
+  getMovementProfile,
+};
