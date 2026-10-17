@@ -44,7 +44,7 @@ async function render() {
       </p>
 
       <h3 style="margin-top:18px;">上传桌宠压缩包</h3>
-      <p class="meta">压缩包内需要按动作分目录放帧文件：<code>default/</code>、<code>reminder/</code>、<code>walking.left/</code>、<code>walking.right/</code>（后三个可选）。每个目录下放 <code><name>_NNN_NNNN.png</code> 命名的帧，其中 <code>NNN</code> 为帧序号、最后四位为该帧播放毫秒数。压缩包可以包一层顶层目录，也可以直接放帧目录。上传后系统会自动生成 <code>manifest.json</code> 并立即生效。</p>
+      <p class="meta">压缩包内需要按动作分目录放帧文件：<code>default/</code> 必填，其他动作目录名任意（如 <code>blinking/</code>、<code>dancing/</code>、<code>headpat/</code> 等），有几个就识别几个。每个目录下放 <code><name>_NNN_NNNN.png</code> 命名的帧，其中 <code>NNN</code> 为帧序号、最后四位为该帧播放毫秒数。压缩包可以包一层顶层目录，也可以直接放帧目录。上传后系统会自动生成 <code>manifest.json</code> 并立即生效。</p>
       <div class="row" style="gap:8px; margin-top:10px; flex-wrap:wrap;">
         <button class="btn" id="import-from-zip">上传桌宠压缩包…</button>
       </div>
@@ -121,8 +121,16 @@ async function render() {
     try {
       const r = await api.pet.importFromZip?.();
       if (!r || r.canceled) return;
-      if (r.deduped) toast(`已存在同内容桌宠：${r.pet.name}`);
-      else            toast(`已导入：${r.pet.name}`);
+      const count = (r && typeof r.variantCount === 'number') ? r.variantCount : null;
+      if (r.deduped) {
+        toast(count != null
+          ? `已存在同内容桌宠：${r.pet.name}（${count} 个动作）`
+          : `已存在同内容桌宠：${r.pet.name}`);
+      } else {
+        toast(count != null
+          ? `已导入：${r.pet.name}（识别了 ${count} 个动作）`
+          : `已导入：${r.pet.name}`);
+      }
       render();
     } catch (e) {
       toast('导入失败：' + ((e && e.message) || e));
@@ -407,6 +415,27 @@ async function renderPetActionsCard(petId) {
   };
   document.getElementById('pet-action-save').onclick = async () => {
     const status = document.getElementById('pet-action-status');
+    // Pull the *current* state of the effect-binding select(s) straight
+    // from the DOM before saving. The per-row onchange handler does
+    // update `_petActionsForm.effect_overrides`, but a fast user can
+    // open the dropdown, pick a value, and click Save before the
+    // browser dispatches `change` — at which point `_petActionsForm`
+    // still reflects the previous value. Reading from the DOM at save
+    // time guarantees what the user sees on screen is what gets
+    // persisted.
+    if (!_petActionsForm.effect_overrides || typeof _petActionsForm.effect_overrides !== 'object') {
+      _petActionsForm.effect_overrides = {};
+    }
+    document.querySelectorAll('[data-binding-picker]').forEach((sel) => {
+      const id = sel.getAttribute('data-binding-picker');
+      const def = sel.getAttribute('data-binding-default') || 'default';
+      if (!id) return;
+      if (sel.value && sel.value !== def) {
+        _petActionsForm.effect_overrides[id] = sel.value;
+      } else {
+        delete _petActionsForm.effect_overrides[id];
+      }
+    });
     try {
       const r = await api.pet.actionsConfig.save(_petActionsForm);
       if (status) {

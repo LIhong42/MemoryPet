@@ -118,7 +118,9 @@ contextBridge.exposeInMainWorld('mp', {
     //   getLoopVariants() → { variants: string[] }
     actionsConfig: {
       get:             ()    => ipcRenderer.invoke('pet:actions_config:get'),
-      save:            (cfg) => ipcRenderer.invoke('pet:actions_config:save', cfg || {}),
+      // (petId, cfg) — handler resolves petId via db fallback if null, but
+      // we pass it explicitly so multi-window flows stay unambiguous.
+      save:            (cfg) => ipcRenderer.invoke('pet:actions_config:save', null, cfg || {}),
       getLoopVariants: ()    => ipcRenderer.invoke('pet:loop_variants:get'),
     },
   },

@@ -1396,12 +1396,24 @@ function normFreeText(s) {
       return { canceled: true };
     }
     const zip = pick.filePaths[0];
-    const installed = installPetZip(zip, getPetsUserDataPath());
+    const installed = await installPetZip(zip, getPetsUserDataPath());
     petRegistry.rescan();
+    // Surface the action count so the renderer can tell the user
+    // "已识别 N 个动作" instead of just "已导入: name". Without this,
+    // the only feedback that the new dynamic-discovery logic worked is
+    // "the dropdown has more options than before" — easy to miss.
+    let variantCount = 0;
+    try {
+      const m = petRegistry.getManifest(installed.pet.id);
+      if (m && m.variants && typeof m.variants === 'object') {
+        variantCount = Object.keys(m.variants).length;
+      }
+    } catch {}
     return {
       ok: true,
       deduped: !!installed.deduped,
       pet: { id: installed.pet.id, name: installed.pet.name },
+      variantCount,
     };
   });
 

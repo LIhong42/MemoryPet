@@ -2,36 +2,43 @@
 // user-data PetRegistry tree.
 //
 // Accepted shape (mirrors `resources/pets/default/`):
-//   <root>/default/<name>_NNN_NNNN.png
-//   <root>/reminder/<name>_NNN_NNNN.png
-//   <root>/walking.right/<name>_NNN_NNNN.png
-//   <root>/walking.left/<name>_NNN_NNNN.png
+//   <root>/<variant>/<name>_NNN_NNNN.png
 //
-// The root directory may be the zip's top-level entry (when the zip wraps
-// the frames in a single folder, like the project's example.zip), or
-// absent entirely (when frames sit at the zip root). Anything else is
-// ignored — e.g. a `runningRight/` folder would be silently skipped
-// today; the `default` variant is the only one strictly required.
+// `<variant>` is the name of an action (folder) the pet can play. Any
+// folder name is accepted — `default`, `reminder`, `walking.right`,
+// `blinking`, `dancing`, `headpat`, etc. — and each folder becomes its
+// own manifest variant keyed by that folder name. The renderer can
+// reference any of these by name through PetRegistry.resolveFrames().
+//
+// `default` is the only required folder (so the pet always has a
+// still-frame to draw when no other action is active). Every other
+// folder is optional; missing ones just mean that action won't fire.
+//
+// The root directory may be the zip's top-level entry (when the zip
+// wraps the frames in a single folder, like the project's example.zip),
+// or absent entirely (when frames sit at the zip root).
 //
 // The on-disk layout we publish is identical to the built-in `default` /
-// `luna` packs, so the existing PetRegistry (`main/pet_registry.js`) can
-// pick it up with no further changes.
+// `luna` packs (variant-name directories holding frame PNGs), so the
+// existing PetRegistry (`main/pet_registry.js`) can pick it up with no
+// further changes.
 //
 // installPetZip(zipPath, userDataPath)
 //   → { ok, deduped, pet: { id, name }, rootDir }
 //   → throws on invalid input (bad zip / no usable variant / IO error)
+//   async — runs ffmpeg colorkey over every PNG before publishing.
 
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const AdmZip = require('adm-zip');
+const { transparentizePng } = require('./png_colorkey');
 
-// Hard caps. Generous enough for a 6-action pack at 8 frames each with
-// ~500 KB PNGs (≈ 24 MB), tight enough that a single zip can't fill the
-// user-data disk.
-const MAX_TOTAL_BYTES = 256 * 1024 * 1024;   // 256 MiB total unpacked
-const MAX_ENTRIES     = 1024;
-const MAX_PNG_BYTES   = 32 * 1024 * 1024;    // 32 MiB per single PNG
+// Hard caps. Generous enough for a large pack with many high-res frames,
+// tight enough that a single zip can't fill the user-data disk.
+const MAX_TOTAL_BYTES = 1024 * 1024 * 1024;  // 1 GiB total unpacked
+const MAX_ENTRIES     = 4096;
+const MAX_PNG_BYTES   = 128 * 1024 * 1024;   // 128 MiB per single PNG
 
 // Frame-naming convention used by PetRegistry.parseFrames():
 //   ^(.*?)_(\d{3,7})_(\d{3,5})\.png$
@@ -39,18 +46,12 @@ const MAX_PNG_BYTES   = 32 * 1024 * 1024;    // 32 MiB per single PNG
 const FRAME_REGEX_SRC = '^(.*?)_(\\d{3,7})_(\\d{3,5})\\.png$';
 const FRAME_RE = new RegExp(FRAME_REGEX_SRC, 'i');
 
-// Variant directory → manifest.variants key. `walking.right` and
-// `walking.left` collapse into a single `walking` variant whose two roots
-// let the registry pick a direction; `default` and `reminder` are 1:1.
-// All other directory names are ignored (silently skipped) — they don't
-// match anything the renderer can play today, but we don't want a stray
-// `runningRight/` folder to break an otherwise-valid pack.
-const VARIANT_DIRS = {
-  'default':       { key: 'default',  slot: null },
-  'reminder':      { key: 'reminder', slot: null },
-  'walking.right': { key: 'walking',  slot: 'right' },
-  'walking.left':  { key: 'walking',  slot: 'left'  },
-};
+// Validate a variant directory name. Any folder name is accepted as long
+// as it's a sensible identifier (no path separators, no Windows reserved
+// chars, no leading dots, not too long). Each accepted folder becomes
+// its own manifest variant keyed by its exact name — so `blinking/`,
+// `dancing/`, `headpat/`, `walking.right/`, etc. are all valid actions.
+const VARIANT_DIR_RE = /^[A-Za-z0-9_.\- ]{1,64}$/;
 
 // Reject any entry whose normalized name leaves the staging root, points
 // at an absolute path, or is a Windows drive-rooted path. Defense against
@@ -143,8 +144,13 @@ function pickRootPrefix(entries) {
 
 // Read every PNG (and compute its byte size) from the zip, grouped by the
 // resolved variant directory. Skips unsafe / non-PNG entries; enforces
-// caps. Returns { variants: { default: [{name, bytes}], … }, totalBytes,
-// rootPrefix }.
+// caps. Returns { variants: { <variantName>: [{name, bytes}], … },
+// totalBytes, rootPrefix }.
+//
+// Any folder name (matching VARIANT_DIR_RE) is accepted as a variant —
+// no fixed whitelist. So a zip with `blinking/`, `dancing/`, `headpat/`,
+// etc. each becomes its own variant entry, in addition to the required
+// `default/`.
 function readPackFromZip(zipPath) {
   const stat = fs.lstatSync(zipPath);
   if (stat.isSymbolicLink()) throw new Error('不允许符号链接');
@@ -155,7 +161,8 @@ function readPackFromZip(zipPath) {
   }
 
   const rootPrefix = pickRootPrefix(rawEntries);
-  const variants = { default: [], reminder: [], walkingRight: [], walkingLeft: [] };
+  // Map<variantName, Array<{name, bytes}>>. Keyed by directory name.
+  const variants = new Map();
   let totalBytes = 0;
 
   for (const e of rawEntries) {
@@ -170,8 +177,11 @@ function readPackFromZip(zipPath) {
     const dirName = segs[0];
     const fileName = segs.slice(1).join('/');
     if (segs.length !== 2) continue;          // don't allow extra nesting
-    const slot = VARIANT_DIRS[dirName];
-    if (!slot) continue;                      // unknown variant; skip
+    // Accept any folder name matching VARIANT_DIR_RE. Folders that fail
+    // the check (empty, too long, has path separators, has Windows
+    // reserved chars) are silently skipped — better to ignore a stray
+    // bad folder than to reject an otherwise valid pack.
+    if (!VARIANT_DIR_RE.test(dirName)) continue;
     if (!/\.png$/i.test(fileName)) continue;  // only PNGs
 
     const size = (e.header && e.header.size) || 0;
@@ -188,16 +198,19 @@ function readPackFromZip(zipPath) {
       throw new Error(`解压后单帧超过 ${Math.round(MAX_PNG_BYTES / 1024 / 1024)} MiB：${fileName}`);
     }
 
-    if (slot.key === 'walking' && slot.slot === 'right') variants.walkingRight.push({ name: fileName, bytes });
-    else if (slot.key === 'walking' && slot.slot === 'left') variants.walkingLeft.push({ name: fileName, bytes });
-    else if (slot.key === 'default') variants.default.push({ name: fileName, bytes });
-    else if (slot.key === 'reminder') variants.reminder.push({ name: fileName, bytes });
+    let bucket = variants.get(dirName);
+    if (!bucket) {
+      bucket = [];
+      variants.set(dirName, bucket);
+    }
+    bucket.push({ name: fileName, bytes });
   }
 
   // `default` is the only hard requirement — the pet has nothing to
-  // stand still on without it. walking / reminder are optional; missing
-  // them just means the pet won't walk / nag.
-  if (variants.default.length === 0) {
+  // stand still on without it. Every other folder is optional; missing
+  // folders just mean those actions won't fire.
+  const defaultBucket = variants.get('default');
+  if (!defaultBucket || defaultBucket.length === 0) {
     throw new Error('桌宠包缺少 default/ 子目录（必填）');
   }
 
@@ -206,7 +219,7 @@ function readPackFromZip(zipPath) {
   // We pull the bytes we already have in memory rather than going back to
   // disk.
   let frameSize = null;
-  for (const f of variants.default) {
+  for (const f of defaultBucket) {
     if (!FRAME_RE.test(f.name)) continue;
     try { frameSize = pngSize(f.bytes); break; } catch {}
   }
@@ -243,7 +256,7 @@ function writeVariant(dir, files) {
 //                  The function itself appends `/pets/`.
 //
 // Returns: { ok:true, deduped:boolean, pet:{id,name}, rootDir }
-function installPetZip(zipPath, userDataPath) {
+async function installPetZip(zipPath, userDataPath) {
   if (!zipPath) throw new Error('zip 路径为空');
   if (!fs.existsSync(zipPath)) throw new Error('找不到桌宠压缩包');
 
@@ -273,40 +286,32 @@ function installPetZip(zipPath, userDataPath) {
     ? rootPrefix
     : zipBaseName;
 
+  // Push every PNG through ffmpeg colorkey so the pet doesn't carry a
+  // solid black background to the desktop. Runs *before* staging is
+  // created so a failure here leaves zero on-disk artifacts — the
+  // catch block below only has work to do once staging exists.
+  // pngSize() (read-only, called earlier on the same Buffer objects)
+  // inspects the IHDR width/height, which the re-encoded PNG keeps
+  // identical, so it remains valid for the manifest's defaultSize.
+  for (const bucket of variants.values()) {
+    for (const f of bucket) {
+      f.bytes = await transparentizePng(f.bytes);
+    }
+  }
+
   // Staging dir under a hidden prefix; renamed atomically on success so a
   // mid-write crash can't leave a half-installed pack visible to the
   // registry rescan.
   const staging = fs.mkdtempSync(path.join(petsRoot, '.import-'));
   try {
-    // Always write `default/` — it's the only required variant.
-    writeVariant(path.join(staging, 'default'), variants.default);
-
-    // Mirror the on-disk shape of `resources/pets/default/`. Note that
-    // `walking` requires both directions to be listed; if only one was
-    // present in the zip, the controller will pick the same root for
-    // both directions (PetRegistry.pickRandom still varies the leaf).
-    const hasWalkingR = variants.walkingRight.length > 0;
-    const hasWalkingL = variants.walkingLeft.length > 0;
-    const walkingRoots = [];
-    if (hasWalkingR || hasWalkingL) {
-      if (hasWalkingR) {
-        writeVariant(path.join(staging, 'walking.right'), variants.walkingRight);
-        walkingRoots.push('walking.right');
-      }
-      if (hasWalkingL) {
-        writeVariant(path.join(staging, 'walking.left'), variants.walkingLeft);
-        walkingRoots.push('walking.left');
-      }
-    }
-
+    // Walk the variant map (insertion order, so `default` appears first
+    // when it exists). Each folder name becomes its own manifest
+    // variant keyed by that exact name — no fixed whitelist.
     const variantDefs = {};
-    variantDefs.default = { roots: ['default'], loop: true };
-    if (variants.reminder.length > 0) {
-      writeVariant(path.join(staging, 'reminder'), variants.reminder);
-      variantDefs.reminder = { roots: ['reminder'], loop: true };
-    }
-    if (walkingRoots.length > 0) {
-      variantDefs.walking = { roots: walkingRoots, loop: true, needsDirection: walkingRoots.length > 1 };
+    for (const [name, files] of variants) {
+      if (files.length === 0) continue;
+      writeVariant(path.join(staging, name), files);
+      variantDefs[name] = { roots: [name], loop: true };
     }
 
     const manifest = {
@@ -350,5 +355,5 @@ module.exports = {
   installPetZip,
   removeImported,
   // exported for tests / future callers
-  _internal: { pickRootPrefix, pngSize, frameSizeFromDir, VARIANT_DIRS },
+  _internal: { pickRootPrefix, pngSize, frameSizeFromDir, VARIANT_DIR_RE },
 };
