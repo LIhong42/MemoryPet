@@ -238,7 +238,7 @@ function writeVariant(dir, files) {
 
 // Public entry point.
 //
-//   userDataPath — the user-data parent dir (`<appData>/MemoryPet`),
+//   userDataPath — the user-data parent dir (`<appData>/SoulDesktopPet`),
 //                  matching the convention in `main/ipc.js:getPetsUserDataPath()`.
 //                  The function itself appends `/pets/`.
 //

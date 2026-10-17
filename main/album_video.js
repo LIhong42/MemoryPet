@@ -183,7 +183,7 @@ async function buildVideo({ events, outPath, options = {} }) {
   };
 
   // Resolve photo paths and count HEIC.
-  const photoRoot = path.join(app.getPath('appData'), 'MemoryPet', 'photos');
+  const photoRoot = path.join(app.getPath('appData'), 'SoulDesktopPet', 'photos');
   let embeddable = 0;
   let heicCount = 0;
   for (const ev of events) {
@@ -200,7 +200,7 @@ async function buildVideo({ events, outPath, options = {} }) {
 
   // Set up a temp working directory.
   const jobId = String(Date.now()) + '-' + Math.random().toString(36).slice(2, 8);
-  const tmpDir = path.join(os.tmpdir(), `memorypet-export-${jobId}`);
+  const tmpDir = path.join(os.tmpdir(), `soul-desktop-pet-export-${jobId}`);
   fs.mkdirSync(tmpDir, { recursive: true });
   const segDir = path.join(tmpDir, 'segments');
   fs.mkdirSync(segDir, { recursive: true });

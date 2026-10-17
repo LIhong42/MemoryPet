@@ -33,7 +33,7 @@ function fail(msg) { console.error('SMOKE FAIL:', msg); process.exit(1); }
 
 async function run() {
   // ---- Stage 1: seed source DB ----
-  await db.open(path.join(sandbox, 'memorypet.db'));
+  await db.open(path.join(sandbox, 'soul-desktop-pet.db'));
   ipc.register({ queue, winMain: fakeWin, winPet: null, setPetState, getPetState, setActiveReminder });
   const forceTimer = setTimeout(() => { console.error('SMOKE FAIL: hang'); process.exit(1); }, 30000);
 
@@ -69,10 +69,10 @@ async function run() {
   if (!fs.existsSync(zipPath)) fail('zip not written');
   console.log('SMOKE OK: backup:export wrote ' + zipPath);
 
-  // ---- Stage 3: zip contains memorypet.db and photos/<id>/pixel.png ----
+  // ---- Stage 3: zip contains soul-desktop-pet.db and photos/<id>/pixel.png ----
   const inspect = new AdmZip(zipPath);
   const names = inspect.getEntries().map((e) => e.entryName).sort();
-  if (!names.includes('memorypet.db')) fail('zip missing memorypet.db: ' + names);
+  if (!names.includes('soul-desktop-pet.db')) fail('zip missing soul-desktop-pet.db: ' + names);
   const photoEntry = names.find((n) => n.endsWith('pixel.png'));
   if (!photoEntry) fail('zip missing photo: ' + names.join(', '));
   // photoEntry should look like 'photos/<eventId>/pixel.png'
@@ -129,7 +129,7 @@ async function run() {
   }
 
   // The actual photo bytes on disk should match what we wrote.
-  const photosDir = path.join(app.getPath('appData'), 'MemoryPet', 'photos');
+  const photosDir = path.join(app.getPath('appData'), 'SoulDesktopPet', 'photos');
   const onDisk = path.join(photosDir, got.id, 'pixel.png');
   if (!fs.existsSync(onDisk)) fail('photo file missing on disk after import');
   if (!fs.readFileSync(onDisk).equals(png)) fail('photo bytes on disk mismatch');
@@ -144,18 +144,18 @@ async function run() {
   console.log('SMOKE OK: backup:apply replaced DB + photos + cleared reminder queue');
 
   // ---- Stage 7: failure paths ----
-  // Bad zip — missing memorypet.db entry.
+  // Bad zip — missing soul-desktop-pet.db entry.
   const badZipPath = path.join(sandbox, 'bad.zip');
   const badZip = new AdmZip();
   badZip.addFile('readme.txt', Buffer.from('hello'));
   badZip.writeZip(badZipPath);
   try {
     await invoke('backup:apply', badZipPath);
-    fail('apply should have thrown for missing memorypet.db');
+    fail('apply should have thrown for missing soul-desktop-pet.db');
   } catch (e) {
-    if (!String(e.message).includes('memorypet.db')) fail('wrong error: ' + e.message);
+    if (!String(e.message).includes('soul-desktop-pet.db')) fail('wrong error: ' + e.message);
   }
-  console.log('SMOKE OK: backup:apply rejects zip without memorypet.db');
+  console.log('SMOKE OK: backup:apply rejects zip without soul-desktop-pet.db');
 
   // Nonexistent zipPath.
   try {

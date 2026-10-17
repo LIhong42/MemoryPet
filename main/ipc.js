@@ -155,13 +155,13 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
   });
 
   // ---- Contact avatars ----
-  // Per-contact uploaded images live under <appData>/MemoryPet/avatars/.
+  // Per-contact uploaded images live under <appData>/SoulDesktopPet/avatars/.
   // The on-disk filename is keyed by the contact id; the renderer retrieves
   // a CSP-friendly data URL via `contacts:avatar_read` so the <img src=…>
   // never has to reference a raw file path. `custom_avatar_path` in the DB
   // stores the relative path so we can find the file later.
   function getAvatarsDir() {
-    return path.join(app.getPath('appData'), 'MemoryPet', 'avatars');
+    return path.join(app.getPath('appData'), 'SoulDesktopPet', 'avatars');
   }
 
   // Resolve the on-disk path for a contact's avatar file. Returns null when
@@ -678,9 +678,9 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
   // bytes are written to disk by photos_upload and served to the renderer
   // via the `memorial-photo://` protocol registered in main/main.js.
 
-  // Photo storage lives under <appData>/MemoryPet/photos/<event_id>/.
+  // Photo storage lives under <appData>/SoulDesktopPet/photos/<event_id>/.
   function getPhotosDir() {
-    return path.join(app.getPath('appData'), 'MemoryPet', 'photos');
+    return path.join(app.getPath('appData'), 'SoulDesktopPet', 'photos');
   }
   // Strip filesystem-hostile characters and clamp the basename before we
   // trust it as a filename on disk.
@@ -1325,7 +1325,7 @@ function normFreeText(s) {
   // `resources/pets/default/`: variant directories (`default/`,
   // `reminder/`, `walking.right/`, `walking.left/`) each holding
   // `<name>_NNN_NNNN.png` frames. `pet_zip_import.installPetZip` writes a
-  // matching `manifest.json` into `<userData>/MemoryPet/pets/imported-<hash>/`
+  // matching `manifest.json` into `<userData>/SoulDesktopPet/pets/imported-<hash>/`
   // so the existing PetRegistry can pick it up unchanged.
   //
   // Handlers:
@@ -1341,7 +1341,7 @@ function normFreeText(s) {
   // `pets/` themselves, so this is the directory the existing
   // `PetRegistry.init({ userDataPath })` was told about.
   function getPetsUserDataPath() {
-    return path.join(app.getPath('appData'), 'MemoryPet');
+    return path.join(app.getPath('appData'), 'SoulDesktopPet');
   }
 
   // First built-in pet id, or null when no built-in exists. Imported pets
@@ -1642,7 +1642,7 @@ function normFreeText(s) {
       }
     };
     const menu = Menu.buildFromTemplate([
-      { label: '🐾 MemoryPet', enabled: false },
+      { label: '🐾 SoulDesktopPet', enabled: false },
       { type: 'separator' },
       {
         label: '🥰 摸一下',
@@ -1714,7 +1714,7 @@ function normFreeText(s) {
       },
       { type: 'separator' },
       {
-        label: '退出 MemoryPet',
+        label: '退出 SoulDesktopPet',
         click: () => {
           setTimeout(() => app.quit(), 50);
         },
@@ -1811,8 +1811,8 @@ function normFreeText(s) {
   });
 
   // ---- Backup / restore ----
-  // Round-trippable bundle: a zip containing memorypet.db and a photos/
-  // folder that follows the on-disk layout <appData>/MemoryPet/photos.
+  // Round-trippable bundle: a zip containing soul-desktop-pet.db and a photos/
+  // folder that follows the on-disk layout <appData>/SoulDesktopPet/photos.
   // search_index is not bundled — it's a derived cache that's rebuilt from
   // the imported tables by the next round of upsertSearch() calls.
   //
@@ -1838,8 +1838,8 @@ function normFreeText(s) {
     const stamp = backupStamp();
     const result = await dialog.showSaveDialog(winMain, {
       title: '导出备份',
-      defaultPath: `memorypet-backup-${stamp}.zip`,
-      filters: [{ name: 'MemoryPet 备份', extensions: ['zip'] }],
+      defaultPath: `soul-desktop-pet-backup-${stamp}.zip`,
+      filters: [{ name: 'SoulDesktopPet 备份', extensions: ['zip'] }],
     });
     if (result.canceled || !result.filePath) return { canceled: true };
 
@@ -1847,7 +1847,7 @@ function normFreeText(s) {
     db.save();
 
     const zip = new AdmZip();
-    zip.addLocalFile(db.dbPath, '', 'memorypet.db');
+    zip.addLocalFile(db.dbPath, '', 'soul-desktop-pet.db');
     const photosDir = getPhotosDir();
     if (fs.existsSync(photosDir)) {
       // Empty directories inside `photos/` would otherwise be dropped by
@@ -1863,7 +1863,7 @@ function normFreeText(s) {
   ipcMain.handle('backup:import', async () => {
     const pick = await dialog.showOpenDialog(winMain, {
       title: '导入备份',
-      filters: [{ name: 'MemoryPet 备份', extensions: ['zip'] }],
+      filters: [{ name: 'SoulDesktopPet 备份', extensions: ['zip'] }],
       properties: ['openFile'],
     });
     if (pick.canceled || !pick.filePaths || !pick.filePaths.length) {
@@ -1878,8 +1878,8 @@ function normFreeText(s) {
 
     const zip = new AdmZip(zipPath);
     const entries = zip.getEntries();
-    if (!entries.some((e) => e.entryName === 'memorypet.db')) {
-      throw new Error('备份中缺少 memorypet.db');
+    if (!entries.some((e) => e.entryName === 'soul-desktop-pet.db')) {
+      throw new Error('备份中缺少 soul-desktop-pet.db');
     }
 
     if (!db.dbPath) throw new Error('数据库未初始化');
@@ -1889,9 +1889,9 @@ function normFreeText(s) {
     try { db.save(); } catch (e) { console.error('pre-import save failed:', e); }
     db.close();
 
-    // 2) Atomically replace memorypet.db. We write to a sibling temp file
+    // 2) Atomically replace soul-desktop-pet.db. We write to a sibling temp file
     //    first so a crash mid-write can't leave the live DB half-written.
-    const dbEntry = entries.find((e) => e.entryName === 'memorypet.db');
+    const dbEntry = entries.find((e) => e.entryName === 'soul-desktop-pet.db');
     const tmpDb = db.dbPath + '.import.tmp';
     fs.writeFileSync(tmpDb, dbEntry.getData());
     fs.copyFileSync(tmpDb, db.dbPath);
@@ -2030,7 +2030,7 @@ function normFreeText(s) {
     const stamp = backupStamp();
     const result = await dialog.showSaveDialog(winMain, {
       title: '导出回忆相册',
-      defaultPath: `memorypet-album-${stamp}.pdf`,
+      defaultPath: `soul-desktop-pet-album-${stamp}.pdf`,
       filters: [{ name: 'PDF 相册', extensions: ['pdf'] }],
     });
     if (result.canceled || !result.filePath) return { canceled: true };
@@ -2093,7 +2093,7 @@ function normFreeText(s) {
     const stamp = backupStamp();
     const result = await dialog.showSaveDialog(winMain, {
       title: '导出回忆视频',
-      defaultPath: `memorypet-album-${stamp}.mp4`,
+      defaultPath: `soul-desktop-pet-album-${stamp}.mp4`,
       filters: [{ name: 'MP4 视频', extensions: ['mp4'] }],
     });
     if (result.canceled || !result.filePath) return { canceled: true };
@@ -2184,7 +2184,7 @@ function normFreeText(s) {
     // Per-run unique temp dir under os.tmpdir(). The finally block at the
     // call site is responsible for removing it (success, cancel, error
     // alike) — we don't want to leak hundreds of MB of PNGs across runs.
-    return fs.mkdtempSync(path.join(os.tmpdir(), 'memorypet-frames-'));
+    return fs.mkdtempSync(path.join(os.tmpdir(), 'soul-desktop-pet-frames-'));
   }
 
   ipcMain.handle('tools:split_video_to_frames', async (_e, payload = {}) => {
@@ -2213,7 +2213,7 @@ function normFreeText(s) {
 
     const stamp = backupStamp();
     const extSuffix = format === 'jpg' ? 'jpg' : 'png';
-    const defaultName = `memorypet-frames-${stamp}.zip`;
+    const defaultName = `soul-desktop-pet-frames-${stamp}.zip`;
     const save = await dialog.showSaveDialog(winMain, {
       title: '保存拆帧压缩包',
       defaultPath: defaultName,

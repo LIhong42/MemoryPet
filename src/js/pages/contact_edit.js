@@ -10,7 +10,7 @@
 //   * `icon_kind`     — Lucide-style glyph identifier. Picked from the
 //                       icon grid below. Used as the default when no photo
 //                       has been uploaded.
-//   * `custom_avatar_path` — relative path under <appData>/MemoryPet/avatars/
+//   * `custom_avatar_path` — relative path under <appData>/SoulDesktopPet/avatars/
 //                       pointing at the user's uploaded photo (or null when
 //                       they have not picked one). The renderer resolves
 //                       that path to a CSP-safe data URL via

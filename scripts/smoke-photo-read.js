@@ -37,7 +37,7 @@ async function invoke(channel, ...args) {
 }
 
 async function run() {
-  await db.open(path.join(sandbox, 'memorypet.db'));
+  await db.open(path.join(sandbox, 'soul-desktop-pet.db'));
   ipc.register({ queue, winMain: fakeWin, winPet: null, setPetState, getPetState, setActiveReminder });
   // Force-exit safety: don't wait for the next event loop tick. The IPC
   // handlers we exercise never create windows, so a 50ms grace is plenty.

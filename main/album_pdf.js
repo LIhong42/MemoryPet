@@ -199,7 +199,7 @@ function shortText(s, max = 200) {
 
 // ---- photo resolution -----------------------------------------------------
 
-const photoRoot = () => path.join(app.getPath('appData'), 'MemoryPet', 'photos');
+const photoRoot = () => path.join(app.getPath('appData'), 'SoulDesktopPet', 'photos');
 
 function resolvePhoto(p) {
   // The PDF IPC layer pre-fills p.full_path. Defensive recompute in case
@@ -276,9 +276,9 @@ async function buildAlbum(options) {
   const doc = new PDFDocument({
     autoFirstPage: false,
     info: {
-      Title: layout ? `MemoryPet 回忆相册` : 'MemoryPet 回忆相册',
-      Author: 'MemoryPet',
-      Producer: 'MemoryPet / pdfkit',
+      Title: layout ? `SoulDesktopPet 回忆相册` : 'SoulDesktopPet 回忆相册',
+      Author: 'SoulDesktopPet',
+      Producer: 'SoulDesktopPet / pdfkit',
       CreationDate: new Date(),
     },
     margins: { top: 0, bottom: 0, left: 0, right: 0 },
@@ -845,7 +845,7 @@ async function renderLegacyMode({ doc, events, totalEvents, onPage, onPhoto }) {
   }
   doc.moveDown(2);
   doc.fontSize(10).fillColor(MUTED)
-     .text(`由 MemoryPet 制作于 ${fmtDateOnly(new Date().toISOString())}`,
+     .text(`由 SoulDesktopPet 制作于 ${fmtDateOnly(new Date().toISOString())}`,
        0, PAGE.a4Portrait.h - 80, { width: PAGE.a4Portrait.w, align: 'center' });
   doc.text(`共 ${totalEvents} 个事件 / ${totalPhotos} 张照片`,
     0, PAGE.a4Portrait.h - 60, { width: PAGE.a4Portrait.w, align: 'center' });

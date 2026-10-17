@@ -1,5 +1,5 @@
 # .gitattributes — enforce consistent line endings across OSes
-# (MemoryPet is Windows-first; CRLF is the platform default, but web/renderer
+# (SoulDesktopPet is Windows-first; CRLF is the platform default, but web/renderer
 # tooling often assumes LF. Be explicit so collaborators don't get noisy diffs.)
 
 * text=auto eol=lf

@@ -134,7 +134,7 @@ function createWindows({ petRegistry } = {}) {
     minHeight: 520,
     show: false,
     center: true,
-    title: 'MemoryPet',
+    title: 'SoulDesktopPet',
     backgroundColor: '#ffffff',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -163,10 +163,10 @@ function createWindows({ petRegistry } = {}) {
 }
 
 function getDbPath() {
-  // %APPDATA%/MemoryPet/memorypet.db
-  const dir = path.join(app.getPath('appData'), 'MemoryPet');
+  // %APPDATA%/SoulDesktopPet/soul-desktop-pet.db
+  const dir = path.join(app.getPath('appData'), 'SoulDesktopPet');
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  return path.join(dir, 'memorypet.db');
+  return path.join(dir, 'soul-desktop-pet.db');
 }
 
 app.on('second-instance', () => {
@@ -184,7 +184,7 @@ app.whenReady().then(async () => {
   const petRegistry = new PetRegistry();
   await petRegistry.init({
     appPath: path.join(__dirname, '..'),
-    userDataPath: path.join(app.getPath('appData'), 'MemoryPet'),
+    userDataPath: path.join(app.getPath('appData'), 'SoulDesktopPet'),
   });
 
   petRegistryRef = petRegistry;
@@ -231,7 +231,7 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   // Quit on Windows/Linux when both windows close. The pet window itself has
   // no close button (frame:false), so this only fires after the main window
-  // is closed too — or via the explicit "退出 MemoryPet" button in Settings.
+  // is closed too — or via the explicit "退出 SoulDesktopPet" button in Settings.
   if (process.platform !== 'darwin') {
     app.quit();
   }

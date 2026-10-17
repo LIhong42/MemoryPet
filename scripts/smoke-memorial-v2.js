@@ -38,7 +38,7 @@ async function run() {
   // ---- Stage 1: seed an old-schema DB ----
   // Open DB, manually CREATE the legacy memorial_events with a `description`
   // column, INSERT one row, then close the db and re-open so migrations run.
-  const dbFile = path.join(sandbox, 'memorypet.db');
+  const dbFile = path.join(sandbox, 'soul-desktop-pet.db');
   const initSqlJs = require('sql.js');
   const SQL = await initSqlJs();
   let raw = new SQL.Database();

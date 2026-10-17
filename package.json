@@ -1,14 +1,16 @@
 {
-  "name": "memory-pet",
+  "name": "soul-desktop-pet",
   "version": "0.1.0",
-  "description": "MemoryPet — local-first relationship & reminders with a desktop pet",
+  "description": "SoulDesktopPet — local-first relationship & reminders with a desktop pet",
   "main": "main/main.js",
-  "author": "MemoryPet",
+  "author": "SoulDesktopPet",
   "license": "Apache-2.0",
   "scripts": {
     "start": "node scripts/run-electron.js .",
     "dev": "node scripts/run-electron.js . --dev",
-    "postinstall": "node scripts/hoist-call-bind-helpers.js",
+    "doctor": "node scripts/doctor.js",
+    "install:bin": "node scripts/install-electron-bin.js",
+    "postinstall": "node scripts/install.js",
     "prebuild": "node scripts/hoist-call-bind-helpers.js && node scripts/prebuild-extract-winCodeSign.js",
     "build": "npm run prebuild && electron-builder",
     "build:dir": "npm run prebuild && electron-builder --dir"
@@ -35,8 +37,8 @@
     "jsdom": "^29.1.1"
   },
   "build": {
-    "appId": "com.memorypet.app",
-    "productName": "MemoryPet",
+    "appId": "com.souldesktoppet.app",
+    "productName": "SoulDesktopPet",
     "asar": false,
     "files": [
       "main/**/*",
@@ -85,7 +87,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "MemoryPet"
+      "shortcutName": "SoulDesktopPet"
     },
     "directories": {
       "output": "dist"

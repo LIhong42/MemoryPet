@@ -97,7 +97,7 @@ async function render() {
 
     <div class="card">
       <h2>应用</h2>
-      <button class="btn danger" id="quit-app">退出 MemoryPet</button>
+      <button class="btn danger" id="quit-app">退出 SoulDesktopPet</button>
       <p class="meta" style="margin-top:8px">点击后关闭整个应用，包括桌面宠物。</p>
     </div>
   `;
@@ -167,7 +167,7 @@ async function render() {
     }
   };
   document.getElementById('quit-app').onclick = async () => {
-    if (!confirm('确认退出 MemoryPet？')) return;
+    if (!confirm('确认退出 SoulDesktopPet？')) return;
     await api.app.quit();
   };
 
