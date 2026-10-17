@@ -64,8 +64,8 @@ npm start
 ```
 > 主窗口默认隐藏；点击桌宠即可唤起。
 
-> 💡 **如果 `npm install` 看起来卡了、或 `npm start` 报 `Electron failed to install correctly`**，
-> 请直接跳到下面的 [故障排查](#故障排查) 一节。一条 `npm run doctor -- --fix` 通常就够了。
+> 💡 **如果 `npm install` 看起来卡了、或 `npm start` 报 `Electron failed to install correctly` / `spawn EFTYPE` 等**，
+> 直接跳到下面的 [故障排查](#故障排查) 一节。一条 `npm run doctor -- --fix` 通常就够了。
 
 ### 打包为安装程序（Windows）
 ```bash
@@ -186,46 +186,75 @@ npm run build
 
 ## 故障排查
 
-> 本项目常见安装 / 启动失败，原因几乎都是同一个：**Electron 的二进制（`electron.exe`，约 100 MB）没下载下来**。
-> `node_modules/electron/` 这个 npm 包本身只是源码；真正的可执行文件由 `node_modules/electron/postinstall` 从 GitHub Releases 拉取，国内网络非常容易超时。
+> 两个大件依赖二进制下载——`electron` (~100 MB) 与 `ffmpeg-static` (~80 MB)。
+> 它们都是从 **GitHub Releases** 下载的，本机 `npm install` 在网络阻塞 / 镜像超时 / 同步盘占用文件时会下到"占位 1 MB 损坏文件"。
+> 这个项目用 `scripts/install.js` 在 postinstall 阶段自动检测 + 修复；用 `npm run doctor` 用户态随时复查。
 
 ### 1. 先跑医生
 ```bash
 npm run doctor
 ```
-会逐项检查 Node 版本、`node_modules`、Electron 二进制、磁盘空间，并打印可粘贴的修复命令。
+会逐项检查 Node 版本、`node_modules`、Electron 二进制、ffmpeg 二进制（**包括**能否成功 spawn）、磁盘空间，并打印可粘贴的修复命令。
 
-### 2. 一键修复
+### 2. 一键修复（任何 ✗ 都会自动跑 `npm rebuild`）
 ```bash
-npm run doctor -- --fix     # 自动 npm rebuild electron
+npm run doctor -- --fix
 ```
-> 仍然失败？下面的命令 99% 能解：
+> 仍失败？下面的命令 99% 能解：
 ```bash
-npm run install:bin
-# 或：
-set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/   # Windows cmd
-export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ # bash
-npm rebuild electron
+npm run install:bin                   # 只重下 Electron 二进制
+npm rebuild ffmpeg-static             # 只重下 ffmpeg
 ```
 
-### 3. 完全重装
+### 3. Slow GitHub / `npm install` 卡住不动
+本项目不内置任何第三方镜像（避免你哪天设错 hardcode 而错过 npm 提示）。如果你**确实**拉不动 GitHub，按需设一次性环境变量即可，**这只影响你当前的 shell**：
+```bash
+# Windows cmd
+set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
+set FFMPEG_BIN_BUILDS_URL=https://npmmirror.com/binaries/ffmpeg-static/
+
+# bash
+export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
+export FFMPEG_BIN_BUILDS_URL=https://npmmirror.com/binaries/ffmpeg-static/
+
+# 然后再跑：
+npm install
+```
+> 也可给 **git** 设代理：`git config --global http.proxy http://127.0.0.1:7890`
+
+### 4. 完全重装
 ```bash
 rm -rf node_modules package-lock.json
 npm install
 ```
 > 如果重装前看到 `EACCES` / `EPERM`，关掉 OneDrive / 坚果云 / Dropbox 同步后再试。
 
-### 4. 常见报错速查
+### 5. 常见报错速查
 | 报错 | 原因 | 修复 |
 |---|---|---|
-| `Electron failed to install correctly` | 二进制未下完 | `npm run install:bin` |
-| `npm install 卡住不动` | 在等 GitHub | 设 `ELECTRON_MIRROR` 后重装 |
-| `Cannot create symbolic link` | Windows 普通用户无 `SeCreateSymbolicLinkPrivilege`（仅在打包时） | 打包脚本会自动剔除 macOS 符号链接，无需手动处理 |
+| `Electron failed to install correctly` | Electron 二进制未下完 | `npm run install:bin` |
+| `spawn EFTYPE` / `Error: spawn UNKNOWN` | **ffmpeg.exe 是 1 MB 假文件**（npm install.js 下载失败留下的占位）| `npm rebuild ffmpeg-static` 或 `npm run doctor -- --fix` |
+| `npm install 卡住不动` | 在等 GitHub | 见"3. Slow GitHub"一节 |
+| `Error occurred in handler for 'tools:split_video_to_frames'` | 内部 try/catch 拿到的是 spawn EFTYPE | 同上行 |
+| `Cannot create symbolic link` | Windows 普通用户无 `SeCreateSymbolicLinkPrivilege`（仅在打包时） | 打包脚本会自动剔除 macOS 符号链接 |
 | `EACCES ... EPERM` | OneDrive / 杀软占用文件 | 关掉同步后再 `npm install` |
 | 项目路径超过 260 字符 | Windows MAX_PATH | 把项目挪到 `C:\proj\soul-desktop-pet` |
-| 主窗口弹出后立刻消失 | Pin 锁 / 桌宠位置被推到屏幕外 | 在 `%APPDATA%\SoulDesktopPet\` 下手动删 `pet_x` / `pet_y` 设置 |
+| 主窗口弹出后立刻消失 | PIN 锁 / 桌宠位置被推到屏幕外 | 在 `%APPDATA%\SoulDesktopPet\` 下手动删 `pet_x` / `pet_y` 设置 |
 
-### 5. 数据目录
+### 6. ffmpeg.exe 手动恢复（最坏情况）
+
+如果 `npm rebuild ffmpeg-static` 也拉不到（GitHub 在你那边彻底挂了）：
+
+**方法 A：拷文件（推荐）**
+1. 在能上 GitHub 的机器上：`npm install ffmpeg-static` 完成；
+2. 把 `node_modules/ffmpeg-static/ffmpeg.exe`（约 80 MB）拷过来覆盖。
+
+**方法 B：用系统 ffmpeg**
+1. 安装 ffmpeg（Windows: `winget install Gyan.FFmpeg`，macOS: `brew install ffmpeg`）；
+2. 设环境变量 `FFMPEG_BIN=<full path to ffmpeg.exe>`；
+3. `npm start`。
+
+### 7. 数据目录
 所有用户数据都在操作系统用户目录下，独立于项目：
 ```
 # Windows

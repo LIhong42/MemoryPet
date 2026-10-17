@@ -1,0 +1,1 @@
+- [Project setup reliability](project-setup-reliability.md) — npm install postinstall hangs in this env; use --ignore-scripts + manual binary downloads

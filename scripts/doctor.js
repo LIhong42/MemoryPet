@@ -10,7 +10,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { execSync } = require('child_process');
+const { execSync, spawnSync } = require('child_process');
 
 const ROOT = process.cwd();
 const NM = path.join(ROOT, 'node_modules');
@@ -111,10 +111,66 @@ if (!electronOk) {
 }
 
 // --------------------------------------------------------------------------
-// 5) Other heavy deps
+// 5) ffmpeg binary (the chronic failure #2 — size check + functional check)
+// --------------------------------------------------------------------------
+{
+  const ffDir = path.join(NM, 'ffmpeg-static');
+  const ffBin = path.join(ffDir, process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+
+  if (!fs.existsSync(ffDir)) {
+    check('ffmpeg-static package installed', false, 'npm install ffmpeg-static');
+  } else if (!fs.existsSync(ffBin)) {
+    check('ffmpeg binary present', false,
+      'npm rebuild ffmpeg-static\nIf still missing: delete node_modules/ffmpeg-static/ and reinstall.');
+  } else {
+    const sz = fs.statSync(ffBin).size;
+    const szMB = (sz / 1024 / 1024).toFixed(1);
+    const sizeOk = (process.platform !== 'win32') || sz >= 60 * 1024 * 1024;
+
+    if (!sizeOk) {
+      let fix = `ffmpeg.exe is only ${szMB} MB — the install.js script downloaded a placeholder.\n`;
+      fix += `npm rebuild ffmpeg-static`;
+      if (FIX) {
+        console.log(`${YLW('[fix]')} rebuilding ffmpeg-static …`);
+        try {
+          // Remove the bad binary so the package's own install.js doesn't
+          // exit early on its `statSync(isFile)` guard.
+          try { fs.unlinkSync(ffBin); } catch (_) {}
+          execSync('npm rebuild ffmpeg-static', { cwd: ROOT, stdio: 'inherit' });
+        } catch (_) { /* leave status false */ }
+      }
+      // Re-check after fix.
+      if (fs.existsSync(ffBin) && fs.statSync(ffBin).size >= 60 * 1024 * 1024) {
+        check(`ffmpeg binary present (${(fs.statSync(ffBin).size/1024/1024).toFixed(1)} MB)`, true);
+      } else {
+        check(`ffmpeg binary present (${szMB} MB — placeholder)`, false, fix);
+      }
+    } else {
+      // Functional smoke test. `ffmpeg -version` writes to stdout but we
+      // only care about exit code.
+      let ok = false;
+      try {
+        const r = spawnSync(ffBin, ['-version'], { stdio: ['ignore', 'ignore', 'ignore'] });
+        ok = r.status === 0;
+      } catch (_) { ok = false; }
+      if (ok) {
+        info(`ffmpeg.exe — ${szMB} MB, runs OK`);
+        check('ffmpeg binary usable', true);
+      } else {
+        check(`ffmpeg binary present (${szMB} MB) but refuses to run`, false,
+          `The binary exists but Windows rejects it (常见: 下载到了损坏资产).\n` +
+          `npm rebuild ffmpeg-static\n` +
+          `If rebuild doesn't help: copy ffmpeg.exe from a working machine,\n` +
+          `or set FFMPEG_BIN=<system-installed ffmpeg.exe> before npm start.`);
+      }
+    }
+  }
+}
+
+// --------------------------------------------------------------------------
+// 6) Other heavy deps
 // --------------------------------------------------------------------------
 const deps = [
-  ['ffmpeg-static', 'ffmpeg.exe'],
   ['sql.js', null],
   ['pdfkit', null],
   ['adm-zip', null],
