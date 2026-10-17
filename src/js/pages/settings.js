@@ -105,6 +105,11 @@ async function render() {
     try {
       await api.pet.setCurrent(e.target.value);
       toast('桌宠已切换');
+      // Re-render the whole page so the "角色动作" card (which depends
+      // on the active pet's manifest variants) and the installed-pets
+      // list (which highlights the newly-selected row) both reflect the
+      // new pet without the user having to leave and come back.
+      render();
     } catch (err) {
       toast('切换失败：' + ((err && err.message) || err));
     }

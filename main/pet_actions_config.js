@@ -277,18 +277,39 @@ function cloneDefaults() {
 // reaction animation respects the user's per-cozy-action override.
 //
 // Falls back (in order):
-//   1. The user's saved override for that cozy action id.
-//   2. EFFECT_BINDINGS[id].default_variant (the hardcoded fallback when
-//      the user hasn't customized anything).
-//   3. 'default' as a last resort if even the binding default is missing
-//      (shouldn't happen in practice, but keeps the renderer safe).
-function getEffectVariant(cfg, cozyActionId) {
+//   1. The user's saved override for that cozy action id, if it's a
+//      string the active pet's manifest actually exposes.
+//   2. EFFECT_BINDINGS[id].default_variant, if the active pet's manifest
+//      exposes it. Many pets ship without `pat` / `sleep` / `cuddle` /
+//      `play` variants (the cozy names that double as EFFECT_BINDINGS
+//      ids) — falling back to `default` keeps the pet rendering *some*
+//      animation instead of `pet:resolve_frames` failing.
+//   3. 'default' as a last resort.
+//
+// Why not just trust the override: a user with multiple pets can
+// override `pet → dancing` on VioletMoon and forget to clear it when
+// switching to a pet that doesn't have `dancing`. We have to cross-check
+// against the active manifest or we'll keep pointing at a variant the
+// active pet can't play, and the renderer will go blank.
+function getEffectVariant(cfg, cozyActionId, petRegistry, petId) {
   const binding = EFFECT_BINDINGS.find((b) => b.id === cozyActionId);
-  const fallback = binding ? binding.default_variant : 'default';
-  if (!cfg || !cfg.effect_overrides) return fallback;
-  const override = cfg.effect_overrides[cozyActionId];
-  if (typeof override === 'string' && override) return override;
-  return fallback;
+  const hardFallback = binding ? binding.default_variant : 'default';
+  // Allow the caller to skip manifest validation (e.g. tests); the
+  // production IPC path always passes both. `petManifestExposes` returns
+  // true for `default` even without looking at the manifest, so the
+  // common case (any pet, default fallback) is safe.
+  const variantExists = (v) => {
+    if (v === 'default') return true;
+    if (!petRegistry || !petId) return false;
+    const m = petRegistry.getManifest(petId);
+    return !!(m && m.variants && Object.prototype.hasOwnProperty.call(m.variants, v));
+  };
+  if (cfg && cfg.effect_overrides) {
+    const override = cfg.effect_overrides[cozyActionId];
+    if (typeof override === 'string' && override && variantExists(override)) return override;
+  }
+  if (variantExists(hardFallback)) return hardFallback;
+  return 'default';
 }
 
 module.exports = {

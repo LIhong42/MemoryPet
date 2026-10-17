@@ -1,0 +1,43 @@
+{
+  "id": "VioletMoon-default",
+  "name": "VioletMoon-default",
+  "description": "",
+  "defaultSize": {
+    "w": 2160,
+    "h": 2880
+  },
+  "frameRegex": "^(.*?)_(\\d{3,7})_(\\d{3,5})\\.png$",
+  "variants": {
+    "default": {
+      "roots": [
+        "default"
+      ],
+      "loop": true
+    },
+    "running.left": {
+      "roots": [
+        "running.left"
+      ],
+      "loop": true
+    },
+    "running.right": {
+      "roots": [
+        "running.right"
+      ],
+      "loop": true
+    },
+    "walking.left": {
+      "roots": [
+        "walking.left"
+      ],
+      "loop": true
+    },
+    "walking.right": {
+      "roots": [
+        "walking.right"
+      ],
+      "loop": true
+    }
+  },
+  "source": "builtIn"
+}

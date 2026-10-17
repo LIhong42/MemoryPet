@@ -1648,7 +1648,7 @@ function normFreeText(s) {
         // is fine — it reads from the in-memory DB row, no IPC roundtrip.
         const petId = db.getSetting('pet_id') || null;
         const cfg = petId ? petActionsConfig.loadConfig(db, petId) : null;
-        const variant = petActionsConfig.getEffectVariant(cfg, action);
+        const variant = petActionsConfig.getEffectVariant(cfg, action, petRegistry, petId);
         fireVariant(variant, m.ms, { minTier: m.minTier || 0 });
         if (m.particle) sendParticle(m.particle);
       }
